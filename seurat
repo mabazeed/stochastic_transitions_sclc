@@ -1,0 +1,66 @@
+##Seurat analysis using scRNAseq data##
+
+library(nlme)
+if (!requireNamespace("BiocManager", quietly = TRUE))
+install.packages("BiocManager")
+BiocManager::install("multtest")
+BiocManager::install("reticulate")
+library(reticulate)
+library(multtest)
+library(Seurat)
+library(ggplot2)
+library(sctransform)
+library(dplyr)
+utils::methods(class = 'Assay')
+Sys.setenv('R_MAX_VSIZE'=32000000000)
+Sys.getenv('R_MAX_VSIZE')
+sessionInfo()
+usethis::edit_r_environ()
+
+sclc_S1 <- Read10X("filtered_feature_bc_matrix")
+sclc_s1 <- CreateSeuratObject(counts = sclc_S1)
+sclc_S1[c("ASCL1", "NEUROD1", "YAP1"), 1:30]
+sclc_s1 <- FindVariableFeatures(sclc_s1, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(sclc_s1), 10)
+plot1 <- VariableFeaturePlot(sclc_s1); plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+CombinePlots(plots = list(plot1, plot2))
+sclc_s1 <- ScaleData(sclc_s1)
+
+sclc_s1 <- PercentageFeatureSet(sclc_s1, pattern = "^MT-", col.name = "percent.mt")
+sclc_s1 <- SCTransform(sclc_s1, vars.to.regress = "percent.mt", verbose = FALSE)
+sclc_s1[c("ASCL1", "NEUROD1", "YAP1"), 1:30]
+sclc_s1 <- RunPCA(sclc_s1, verbose = FALSE)
+VizDimLoadings(sclc_s1, dims = 1:2, reduction = "pca")
+DimPlot(sclc_s1, reduction = "pca")
+DimHeatmap(sclc_s1, dims = 1:2, cells = 2000, balanced = TRUE)
+cluster1.markers <- FindMarkers(sclc_s1, ident.1 = 1, min.pct = 0.25)
+head(cluster1.markers, n = 5)
+sclc.markers <- FindAllMarkers(sclc_s1, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+top10 <- sclc.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC)
+DoHeatmap(sclc_s1, features = top10$gene) + NoLegend()
+sclc_s1 <- FindNeighbors(sclc_s1, dims = 1:30, verbose = FALSE)
+sclc_s1 <- FindClusters(sclc_s1, verbose = FALSE)
+DimPlot(sclc_s1, label = TRUE) + NoLegend()
+VlnPlot(sclc_s1, features = c("EPCAM", "ASCL1", "NEUROD1", "VIM", "YAP1", "CD44"), pt.size = 0.2, ncol=3)
+FeaturePlot(sclc_s1, features = c("EPCAM", "ASCL1", "NEUROD1", "VIM", "YAP1", "MKI67"), pt.size = 0.2, 
+            ncol = 3)
+
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+sclc_s1_1 <- CellCycleScoring(sclc_s1, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+sclc_s1_1 <- RunPCA(sclc_s1_1, features = c(s.genes, g2m.genes))
+DimPlot(sclc_s1_1)
+
+sclc_s1_1$CC.Difference <- sclc_s1_1$S.Score - sclc_s1_1$G2M.Score
+sclc_s1_1 <- ScaleData(sclc_s1_1, vars.to.regress = "CC.Difference", features = rownames(sclc_s1_1))
+sclc_s1_1 <- RunPCA(sclc_s1_1, verbose = FALSE)
+VizDimLoadings(sclc_s1_1, dims = 1:2, reduction = "pca")
+DimPlot(sclc_s1_1, reduction = "pca")
+FeaturePlot(sclc_s1_1, features = c("EPCAM", "ASCL1", "NEUROD1", "VIM", "YAP1", "MKI67"), pt.size = 0.2, 
+            ncol = 3)
+
+sclc_s1_2 <- RunUMAP(sclc_s1_1, dims = 1:10)
+DimPlot(sclc_s1_2, reduction = "umap")
+FeaturePlot(sclc_s1_2, features = c("EPCAM", "ASCL1", "NEUROD1", "VIM", "YAP1", "MKI67"), pt.size = 0.2, 
+            ncol = 3)
