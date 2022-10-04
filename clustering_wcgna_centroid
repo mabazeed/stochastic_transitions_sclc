@@ -1,0 +1,1504 @@
+##Preinstall dependent packages
+source("https://bioconductor.org/biocLite.R")
+biocLite()
+biocLite(c("AnnotationDbi", "impute", "GO.db", "preprocessCore", "qvalue", "edgeR", "geNetClassifier"))
+list.of.packages <- c("ConcensusClusterPlus", "WGCNA", "Hmisc", "sva", "GO.db", "AnnotationDbi", "org.Hs.eg.db",
+                      "R.cache", "fastcluster", "RColorBrewer",
+                      "GSEABase", "GSVA", "minerva", "limma", "gplots",
+                      "corpcor", "qvalue", "splines", "scales", "reshape2", 
+                      "plyr", "cluster", "dplyr", "sigclust", "cowplot")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+setRepositories()
+biocLite("ConsensusClusterPlus") 
+biocLite("sva")
+biocLite("org.Hs.eg.db")
+biocLite("WGCNA")
+biocLite("GSEABase")
+biocLite("GSVA")
+biocLite("R.cache")
+biocLite("minerva")
+biocLite("gplots")
+biocLite("minerva")
+biocLite("sigclust")
+biocLite("dplyr")
+biocLite("cowplot")
+biocLite("igraph")
+library(ConsensusClusterPlus)
+library(WGCNA)
+library(Hmisc)
+library(sva)
+library(GO.db)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(GSEABase)
+library(GSVA)
+library(R.cache)
+library(fastcluster)
+library(RColorBrewer)
+library(minerva)
+library(limma)
+library(gplots)
+library(scales)
+library(qvalue)
+library(reshape2)
+library(plyr)
+library(geNetClassifier)
+library(sigclust)
+library(cluster)
+library(dplyr)
+library(cowplot)
+library(igraph)
+###################Start of General Data Import and Preprocessing Steps####################
+setwd("/Users/mohamed/SCLC_working_directory")
+work_dir <- getwd() #get working directory
+##import CCLE Small Cell microarray expression data from working directory and collapse data on gene names
+file_name1 <- file.path(work_dir, "small cell clustering_complete CCLE gene expression2.txt")#create file path
+my_dat_CCLE <- read.delim(file_name1, header = T, sep = "\t")#import small cell data
+my_dat_CCLE <- my_dat_CCLE[,-2]#reformat data: remove affymetrix specific annotations
+cache(agg_dat_CCLE <- aggregate(my_dat_CCLE,by=list(my_dat_CCLE[,1]), FUN = function(x) mean(as.numeric(as.character(x)))), dir=".", prefix=paste("tmp_R_cache_")) 
+#aggregate gene expression data (take average) by GeneName in Column 1 of dataframe 'my_dat_CCLE'
+agg_dat_CCLE <- agg_dat_CCLE[,-2] #remove column of NAs introduced by function 'aggregate'
+rownames(agg_dat_CCLE) <- agg_dat_CCLE[,1] #use gene names from column 1 of data frame 'agg_dat' and assign as row names
+agg_dat_CCLE <- agg_dat_CCLE[,-1]#remove column 1 of data frame 'agg_dat' containing gene names
+##import RNASeq Small Cell RNA Seq expression data from working directory and collapse data on gene names
+file_name2 <- file.path(work_dir, "smallcell_rnaseq_nature.txt")#create file path
+my_dat_RNASeq <- read.delim(file_name2, header = T, sep = "\t")#import small cell data
+my_dat_RNASeq <- my_dat_RNASeq[,-2]#reformat data: remove transcript-level annotations
+cache(agg_dat_RNASeq <- aggregate(my_dat_RNASeq,by=list(my_dat_RNASeq[,1]), FUN = function(x) sum(as.numeric(as.character(x)))), dir=".", prefix=paste("tmp_R_cache_")) #aggregate transcript counts (summ transcript counts by gene) by GeneName in Column 1 of dataframe 'my_dat_RNASeq'
+agg_dat_RNASeq <- agg_dat_RNASeq[,-2]#remove column of NAs introduced by function 'aggregate'
+rownames(agg_dat_RNASeq) <- agg_dat_RNASeq[,1] #use gene names from column 1 of data frame 'agg_dat' and assign as row names
+agg_dat_RNASeq <- agg_dat_RNASeq[,-1]#remove column 1 of data frame 'agg_dat' containing gene names
+
+##use function 'ComBat' to control batch effects from CCLE small cell sample preparation, control covariates 'Batch' and 'Gender'
+work_dir <- getwd() #get working directory
+file_name3 <- file.path(work_dir, "ComBat_sample_info_smallcell.txt")#create file path
+my_ComBat_info1 <- read.delim(file_name3, header = T, sep = "\t")#import CCLE batch info for small cell data
+batch1 <- my_ComBat_info1$Batch #create vector with batch names
+mod1 <- model.matrix(~as.factor(Gender), data = my_ComBat_info1)
+ComBat_mat_CCLE <- ComBat(dat = agg_dat_CCLE, batch = batch1, mod = mod1,par.prior = T)
+## Note: unable to use ComBat on George et al. Nature (2015) data because batch information is unavailable, commented code below was attempt at using supplementary data to define batches but remains unconfirmed
+##use function 'ComBat' to control batch effects from RNASeq Nature Publication Data in small cell sample preparation
+##control covariates 'Gender' and Batch' (which indicates when RNA-Seq data was published, and thus presumably processed (3 publications = 3 'Batch categories))
+# file_name4 <- file.path(work_dir, "ComBat_sample_info_smallcell_RNASeq.txt")
+# my_ComBat_info2 <- read.delim(file_name4, header = T, sep = "\t")#import RNASeq batch info for small cell data
+# batch2 <- my_ComBat_info2$Batch
+# mod2 <- model.matrix(~as.factor(Gender), data = my_ComBat_info2)
+# ComBat_mat_RNASeq <- ComBat(dat = agg_dat_RNASeq, batch = batch2, mod = mod2, par.prior = T)
+
+#transform data using log2(1 + FKPM) transformation
+mat_trans <- log2(1 + agg_dat_RNASeq)
+###################End of General Data Import and Preprocessing Steps####################
+
+###################Start of ConsensusClusterPlus() Analysis of CCLE SCLC Dataset and George et al. Nature (2015) RNASeq Dataset####################
+###################Start of ConsensusClusterPlus() of CCLE SCLC Expression Data####################
+##Set parameters for ConsensusClusterPlus() Analysis
+plot_mad <- TRUE #visually inspect MAD across genes of dataset to set threshold for MAD
+mad_max_CCLE <- 5000 #MAD threshold for # of genes in CCLE Data (will be reset during downstream WGCNA analysis)
+perform_cluster <- TRUE #perform hierarchal clustering
+use_seed <- TRUE #determine if seed should be used for reproducible results
+seed_CCLE <- 86566 #set seed for reproducible clustering algorithm results for CCLE Dataset, used random integer function 'sample(1:100000,1) to determine seed number
+
+##Correlation Matrices of Primaries, PDXs and Cells
+source("https://bioconductor.org/biocLite.R")
+biocLite()
+biocLite(c("GenomicFeatures", "AnnotationDbi"))
+biocLite("BiocUpgrade")
+biocLite("lumi")
+install.packages("lumi",repos="http://www.bioconductor.org/packages/3.3/bioc",type="source")
+library(lumi)
+cor_mat <- 'FinalReport.txt'
+x.lumi <- lumiR.batch(cor_mat, sampleInfoFile='sampleInfo.txt')
+
+
+##calculate median absolute deviation (MAD) of microarray data and determine top genes with highest MAD (i.e. variability), set number of genes with variable 'mad_max_CCLE'
+mads_ComBat <- apply(ComBat_mat_CCLE,1,mad)#calculate median absolute deviation of each row
+if (plot_mad == TRUE) plot(mads_ComBat[rev(order(mads_ComBat))], main = "Ordered MAD of Dataset Genes_CCLE", ylab = "MAD", xlab = "Genes Ranked By MAD")
+my_mat_mad_Combat <- ComBat_mat_CCLE[rev(order(mads_ComBat))[1:mad_max_CCLE],]#reduce data set to most variable genes as set by variable 'mad_max_CCLE'
+my_mat_mad_Combat <- as.matrix(my_mat_mad_Combat)
+##gene median center CCLE dataset
+dat_cent_CCLE <- sweep(my_mat_mad_Combat,1,apply(my_mat_mad_Combat,1,median,na.rm=T),"-")#gene median center data
+dat_cent_CCLE <- as.matrix(dat_cent_CCLE)#convert data frame 'dat_mad_cent' to data matrix
+##Set processed datasets to variables for downstream analysis
+use_data_matrix_CCLE <- dat_cent_CCLE #set variable 'use_data_matrix_CCLE' for clustering with ConsesusClusterPlus()
+
+##perform hierarchal clustering of CCLE Dataset with ConsensusClusterPlus() package
+if (perform_cluster == TRUE) {
+  work_dir <- getwd()
+  today <- Sys.Date()
+  if (use_seed == TRUE) {
+    
+    temp_consensus_name <- paste("CCLE_consensus_seed",seed_CCLE,"_",today,sep="") #set name of ConsensusClusterPlus() output file
+    temp_icl_name <- paste("CCLE_icl_seed",seed_CCLE,"_",today,sep="") #set name of calcICL() output file
+    temp_consensus_file <- file.path(work_dir,temp_consensus_name) #create file path
+    temp_icl_file <- file.path(work_dir,temp_icl_name) #create file path
+    cache(CCLE_results_seed <- ConsensusClusterPlus(use_data_matrix_CCLE,maxK=9,reps=1000,pItem=0.8,pFeature=1,title=temp_consensus_file,
+                                                    clusterAlg="hc",distance="pearson",plot="pdf",seed = seed_CCLE), dir=".", prefix=paste("tmp_R_cache_")) #perform ConsensusClusteringPlus with seed = TRUE
+    cache(CCLE_icl_seed <- calcICL(CCLE_results_seed,title=temp_icl_file,plot="pdf"), dir=".", prefix=paste("tmp_R_cache_")) #perform analysis of clustering results with function 'calcICL()'
+    
+    CCLE_cluster_2 <- CCLE_results_seed[[2]][["consensusClass"]] #concensus clustering for cluster # k = 2
+    #CCLE_cluster_2 <- as.factor(CCLE_cluster_2)
+    CCLE_cluster_3 <- CCLE_results_seed[[3]][["consensusClass"]] #concensus clustering for cluster # k = 3
+    #CCLE_cluster_3 <- as.factor(CCLE_cluster_3)
+    CCLE_cluster_4 <- CCLE_results_seed[[4]][["consensusClass"]] #concensus clustering for cluster # k = 4
+    #CCLE_cluster_4 <- as.factor(CCLE_cluster_4)
+    
+  } else {
+    
+    temp_consensus_name <- paste("CCLE_consensus_without_seed_",today,sep="")
+    temp_icl_name <- paste("CCLE_icl_without_seed_",today,sep="")
+    temp_consensus_file <- file.path(work_dir,temp_consensus_name)
+    temp_icl_file <- file.path(work_dir,temp_icl_name)
+    cache(CCLE_results_noseed <- ConsensusClusterPlus(use_data_matrix_CCLE,maxK=9,reps=1000,pItem=0.8,pFeature=1,title=temp_consensus_file,
+                                                      clusterAlg="hc",distance="pearson",plot="pdf"), dir=".", prefix=paste("tmp_R_cache_")) #perform ConsensusClusteringPlus with seed = FALSE
+    cache(CCLE_icl_noseed <- calcICL(CCLE_results_noseed,title=temp_icl_file,plot="pdf"), dir=".", prefix=paste("tmp_R_cache_")) #perform analysis of clustering results with function 'calcICL()'
+    
+    CCLE_cluster_2 <- CCLE_results_noseed[[2]][["consensusClass"]] #concensus clustering for cluster # k = 2
+    #CCLE_cluster_2 <- as.factor(CCLE_cluster_2)
+    CCLE_cluster_3 <- CCLE_results_noseed[[3]][["consensusClass"]] #concensus clustering for cluster # k = 3
+    #CCLE_cluster_3 <- as.factor(CCLE_cluster_3)
+    CCLE_cluster_4 <- CCLE_results_noseed[[4]][["consensusClass"]] #concensus clustering for cluster # k = 4
+    #CCLE_cluster_4 <- as.factor(CCLE_cluster_4)
+    
+  }
+}
+###################End of ConsensusClusterPlus() of CCLE SCLC Expression Data####################
+###################Start of ConsensusClusterPlus() of RNAseq SCLC Expression Data####################
+##Set parameters for ConsensusClusterPlus() Analysis
+plot_mad <- FALSE #visually inspect MAD across genes of dataset to set threshold for MAD
+mad_max_RNAseq <- 5000 #Mad threshold for # of genes in RNASeq Data (will be reset during downstream WGCNA analysis)
+perform_cluster <- TRUE #perform hierarchal clustering
+use_seed <- TRUE #determine if seed should be used for reproducible results
+seed_RNAseq <- 90 #set seed for reproducible clustering algorithm results for RNASeq Dataset, used random integer function 'sample(1:100000,1)' to determine seed number
+
+##calculate median absolute deviation (MAD) of RNA-seq data and determine top genes with highest MAD (i.e. variability), set number of genes with variable 'mad_max_RNASeq'
+mads_RNASeq <- apply(mat_trans,1,mad)#calculate median absolute deviation of each row
+if (plot_mad == TRUE) plot(mads_RNASeq[rev(order(mads_RNASeq))], main = "Ordered MAD of Dataset Genes_RNASeq", ylab = "MAD", xlab = "Genes Ranked By MAD")
+my_mat_mad_RNASeq <- mat_trans[rev(order(mads_RNASeq))[1:mad_max_RNAseq],]#reduce data set to most variable genes as set by variable 'mad_max_RNASeq'
+my_mat_mad_RNASeq <- as.matrix(my_mat_mad_RNASeq)
+##gene median center RNASeq dataset
+dat_cent_RNASeq <- sweep(my_mat_mad_RNASeq,1,apply(my_mat_mad_RNASeq,1,median),"-")#gene median center data for ConsensusClusterPlus()
+dat_cent_RNASeq <- as.matrix(dat_cent_RNASeq)#convert data frame 'dat_mad_cent' to data matrix
+use_data_matrix_RNASeq <- dat_cent_RNASeq #set variable 'use_data_matrix_RNASeq' for clustering with ConsensusClusterPlus()
+
+##perform hierarchal clustering with ConsensusClusterPlus package
+##Note: results 'RNAseq_results_seed' and 'RNAseq_icl_seed' are cached variables and will be stored in the labeled working directory folder
+if (perform_cluster == TRUE) {
+  #   dat_mad_cent <- sweep(use_data_matrix,1,apply(use_data_matrix,1,median,na.rm=T),"-") #gene median center data for ConcensusClusterPlus
+  #   dat_mad_cent <- as.matrix(dat_mad_cent) #convert data frame 'dat_mad_cent' to data matrix
+  work_dir <- getwd()
+  today <- Sys.Date()
+  if (use_seed == TRUE) {
+    
+    temp_consensus_name <- paste("RNAseq_consensus_seed",seed_RNAseq,"_",today,sep="") #set name of ConsensusClusterPlus() output file
+    temp_icl_name <- paste("RNAseq_icl_seed",seed_RNAseq,"_",today,sep="") #set name of calcICL() output file
+    temp_consensus_file <- file.path(work_dir,temp_consensus_name) #create file path
+    temp_icl_file <- file.path(work_dir,temp_icl_name) #create file path
+    cache(RNAseq_results_seed <- ConsensusClusterPlus(use_data_matrix_RNASeq,maxK=9,reps=1000,pItem=0.8,pFeature=1,title=temp_consensus_file,
+                                                      clusterAlg="hc",distance="pearson",plot="pdf",seed = seed_RNAseq), dir=".", prefix=paste("tmp_R_cache_"))#perform ConsensusClusteringPlus with seed = TRUE
+    cache(RNAseq_icl_seed <- calcICL(RNAseq_results_seed,title=temp_icl_file,plot="pdf"), dir=".", prefix=paste("tmp_R_cache_")) #perform analysis of clustering results with function 'calcICL()'
+    
+    RNAseq_cluster_2 <- RNAseq_results_seed[[2]][["consensusClass"]] #concensus clustering for cluster # k = 2
+    #RNAseq_cluster_2 <- as.factor(RNAseq_cluster_2)
+    RNAseq_cluster_3 <- RNAseq_results_seed[[3]][["consensusClass"]] #concensus clustering for cluster # k = 3
+    #RNAseq_cluster_3 <- as.factor(RNAseq_cluster_3)
+    RNAseq_cluster_4 <- RNAseq_results_seed[[4]][["consensusClass"]] #concensus clustering for cluster # k = 4
+    #RNAseq_cluster_4 <- as.factor(RNAseq_cluster_4)
+    
+  } else {
+    
+    temp_consensus_name <- paste("RNAseq_consensus_without_seed_",today,sep="")
+    temp_icl_name <- paste("RNAseq_icl_without_seed_",today,sep="")
+    temp_consensus_file <- file.path(work_dir,temp_consensus_name)
+    temp_icl_file <- file.path(work_dir,temp_icl_name)
+    cache(RNAseq_results_noseed <- ConsensusClusterPlus(use_data_matrix_RNASeq,maxK=9,reps=1000,pItem=0.8,pFeature=1,title=temp_consensus_file,
+                                                        clusterAlg="hc",distance="pearson",plot="pdf"), dir=".", prefix=paste("tmp_R_cache_"))#perform ConsensusClusteringPlus with seed = FALSE
+    cache(RNAseq_icl_noseed <- calcICL(RNAseq_results_noseed,title=temp_icl_file,plot="pdf"), dir=".", prefix=paste("tmp_R_cache_"))#perform analysis of clustering results with function 'calcICL()'
+    
+    RNAseq_cluster_2 <- RNAseq_results_noseed[[2]][["consensusClass"]] #concensus clustering for cluster # k = 2
+    #RNAseq_cluster_2 <- as.factor(RNAseq_cluster_2)
+    RNAseq_cluster_3 <- RNAseq_results_noseed[[3]][["consensusClass"]] #concensus clustering for cluster # k = 3
+    #RNAseq_cluster_3 <- as.factor(RNAseq_cluster_3)
+    RNAseq_cluster_4 <- RNAseq_results_noseed[[4]][["consensusClass"]] #concensus clustering for cluster # k = 4
+    #RNAseq_cluster_4 <- as.factor(RNAseq_cluster_4)
+    
+  }
+}
+
+RNAseq_cluster_4
+write.csv(RNAseq_cluster_4, file="cluster_4.csv")
+getwd()
+###################End of ConsensusClustPluser() of RNAseq SCLC Expression Data####################
+###################End of ConsensusClustPluser() Analysis of CCLE SCLC Dataset and SCLC RNASeq Dataset####################
+##################Start of geNetClassifier R Package for Building Gene Expression Classifier based on PDX SCLC Dataset###################
+##set paramters for geNetClassifier
+cluster_group_labels <- RNAseq_cluster_4 #select which ConsensusClusterPlus() result for k=2,3,4
+classifier_data_matrix_PDX <- my_mat_mad_RNASeq #use PDX dataset 'my_mat_mad_PDX' as is not gene centered data
+##Calculate Silhouette Widths to Determine Core Samples of ConsensusClusterPlus Cluster Groups in CCLE SCLC Cell Lines
+dat_transpose <- t(classifier_data_matrix_PDX) #transpose data matrix for input into dissimilarity matrix function 'daisy'
+cluster <- cluster_group_labels #set data vector containing sample cluster assignments from ConsensusClusterPlus()
+cluster_group_labels
+cluster.d <- daisy(dat_transpose, metric="euclidean") #calculate dissimilarity among samples in data matrix via euclidean distance
+cluster.s <- silhouette(as.numeric(RNAseq_cluster_4),cluster.d) #calculate silhouette widths of samples within each cluster
+plot(cluster.s) #create silhouette plot using colors stored in 'CCLE_results_seed[[4]][["clrs"]]'
+write.csv(cluster.s, "p_pdx_64.csv")
+##Determine CCLE Cell Line Samples with Positive Silhouette Widths
+##Determine top 'n' samples that are closest in distance for each cluster group for constructing classifier
+n <- 8 #number of samples per cluster chosen for building classifier with geNetClassifier (number of samples per cluster group should be equal according to geNetClassifier authors)
+rownames(cluster.s) <- names(cluster)
+sort_cluster.s <- sortSilhouette(cluster.s) #sort silhouette object 'cluster.s' by cluster group and silouette width
+p <- as.data.frame(cbind(rownames(sort_cluster.s),sort_cluster.s[,1],sort_cluster.s[,2],sort_cluster.s[,3])) #create dataframe of silhouette object 'sort_cluster.s'
+write.csv(p, "p_pdx_64.csv")
+
+##################Start of Differential Gene and Gene Set Analysis###################
+##################Differential Gene Expression Analysis by Clusters, Comparison is One group vs. Rest###################
+##Set parameters
+DE_data_matrix_CCLE <- my_mat_mad_Combat #use CCLE dataset 'my_mat_mad_Combat' as is not gene centered data, top 5000 genes by MAD
+DE_data_matrix_RNASeq <- mat_trans #use RNASeq dataset 'mat_trans' of log(FPKM + 1) transformed data, not gene centered
+logFCcutoff <- log2(1.8) #set threshold for fold change in differential gene expression
+adjPvalueCutoff <- 0.05 #set FDR threshold for Benjamini-Hochberg multihypothesis testing significance correction
+#adjPvalueCutoff <- 0.001 #set FDR threshold for Benjamini-Hochberg multihypothesis testing significance correction
+
+##Differential Gene Expression using topTable() function to test for significance between an individual cluster versus all other clusters (ANOVA-like analysis)
+design_gene_table <- model.matrix(~0+factor(CCLE_cluster_4))
+colnames(design_gene_table) <- c("A","B","C","D")    
+fit_gene_table <- lmFit(DE_data_matrix_CCLE,design_gene_table)
+#contrast_matrix_gene_table <- makeContrasts("B-A","C-A","C-B","D-A", "D-B", "D-C", levels = design_gene_3) #pairwise comparison contrast matrix
+contrast_matrix_gene_table <- makeContrasts("A-(B+C+D)/3","B-(A+C+D)/3","C-(A+B+D)/3","D-(A+B+C)/3", levels = design_gene_table)
+fit_gene_table <- contrasts.fit(fit_gene_table, contrast_matrix_gene_table)
+fit_gene_table <- eBayes(fit_gene_table)
+allGenes_table <- topTable(fit_gene_table,number = Inf, p.value = adjPvalueCutoff)
+##Output results of significance testing using decideTests
+res_gene_table <- decideTests(fit_gene_table, p.value = adjPvalueCutoff, adjust.method = "BH", lfc=logFCcutoff)
+summary(res_gene_table)
+
+##Differential Gene Expression using treat() and TopTreat() functions to test for significance among particular cluster versus all other cluster comparisons
+design_gene_treat <- model.matrix(~0+factor(CCLE_cluster_4))
+colnames(design_gene_treat) <- c("A","B","C","D")    
+fit_gene_treat <- lmFit(DE_data_matrix_CCLE,design_gene_treat)
+#contrast_matrix_gene_3 <- makeContrasts("B-A","C-A","C-B","D-A", "D-B", "D-C", levels = design_gene_3)
+contrast_matrix_gene_treat <- makeContrasts("A-(B+C+D)/3","B-(A+C+D)/3","C-(A+B+D)/3","D-(A+B+C)/3", levels = design_gene_treat)
+fit_gene_treat <- contrasts.fit(fit_gene_treat, contrast_matrix_gene_treat)
+fit_gene_treat <- treat(fit_gene_treat, lfc = logFCcutoff)
+DEgenes_treat_1 <- topTreat(fit_gene_treat, number = Inf, p.value = adjPvalueCutoff, adjust = "BH", coef = 1)
+DEgenes_treat_2 <- topTreat(fit_gene_treat, number = Inf, p.value = adjPvalueCutoff, adjust = "BH", coef = 2)
+DEgenes_treat_3 <- topTreat(fit_gene_treat, number = Inf, p.value = adjPvalueCutoff, adjust = "BH", coef = 3)
+DEgenes_treat_4 <- topTreat(fit_gene_treat, number = Inf, p.value = adjPvalueCutoff, adjust = "BH", coef = 4)
+
+##Create vector of genes to be used in the heatmap, including the genes found to be significant in topTreat() analysis
+heatmap_genes <- unique(c(rownames(DEgenes_treat_1), rownames(DEgenes_treat_2), rownames(DEgenes_treat_3), rownames(DEgenes_treat_4)))
+
+##Create CCLE Microarray Expression Heatmap of Differential Gene Expression
+#heat_mat <- DE_data_matrix_CCLE[match(rownames(allGenes_treat),rownames(DE_data_matrix_CCLE)),]
+heat_mat <- DE_data_matrix_CCLE[match(heatmap_genes,rownames(DE_data_matrix_CCLE)),]
+cluster_4_not <- t(as.matrix(as.numeric(CCLE_cluster_4)))
+heat_mat_sort <- rbind(cluster_4_not,heat_mat)
+heat_mat_sort <- as.matrix(heat_mat_sort[,order(heat_mat_sort[1,])])
+
+DEgene_cluster_1_ind <- which(heat_mat_sort[1,] == 1)
+DEgene_cluster_2_ind <- which(heat_mat_sort[1,] == 2)
+DEgene_cluster_3_ind <- which(heat_mat_sort[1,] == 3)
+DEgene_cluster_4_ind <- which(heat_mat_sort[1,] == 4)
+DEgene_reorder_ind <- c(DEgene_cluster_1_ind,DEgene_cluster_3_ind,DEgene_cluster_2_ind,DEgene_cluster_4_ind)
+
+num_clust_1 <- length(which(heat_mat_sort[1,]==1))
+num_clust_2 <- length(which(heat_mat_sort[1,]==2))
+num_clust_3 <- length(which(heat_mat_sort[1,]==3))
+num_clust_4 <- length(which(heat_mat_sort[1,]==4))
+CCLE_heat_mat_sort_colors <- c(rep("#B2DF8A",num_clust_1),rep("#A6CEE3", num_clust_3), rep("#33A02C", num_clust_2), rep("#1F78B4", num_clust_4))
+
+CCLE_heat_mat_sort <- heat_mat_sort[-1,DEgene_reorder_ind]
+CCLE_tree <- CCLE_results_seed[[4]][["consensusTree"]]
+
+##Create vector of color values corresponding to grouping of samples into particular clusters
+sub_1 <- replace(CCLE_cluster_4, CCLE_cluster_4 == 1, "#B2DF8A")
+sub_2 <- replace(sub_1, CCLE_cluster_4 == 2, "#33A02C")
+sub_3 <- replace(sub_2, CCLE_cluster_4 == 3, "#A6CEE3")
+sub_4_CCLE <- replace(sub_3, CCLE_cluster_4 == 4, "#1F78B4")
+sample_colors_CCLE <- sub_4_CCLE
+
+##set brewer.pal heatmap colors
+heatmap_color <- rev(brewer.pal(9, "YlGnBu"))
+#prev_heatmap_color <- rev(brewer.pal(11, name = "RdYlGn"))
+
+##Plot heatmap of CCLE Microarray expression data
+# ##Heatmap with Column Dendrogram
+data_heatmap_CCLE <- heatmap.2(heat_mat,Colv = as.dendrogram(CCLE_tree), Rowv = TRUE, dendrogram = 'both',
+                                col = heatmap_color,scale="none", margins=c(2,5),
+                                cexRow = 0.01 + 1/log10(dim(heat_mat)[1]),cexCol = 0.025 + 1/log10(dim(heat_mat)[2]),labCol=NA, labRow = rownames(heat_mat_sort),
+                                key = T, keysize = 1, trace = "none", density.info = 'none',
+                                key.title = NA, ColSideColors = sample_colors_CCLE)
+legend("bottom", legend = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4"), bty = "n", xpd = TRUE, horiz = TRUE, fill = c("#B2DF8A", "#33A02C", "#A6CEE3", "#1F78B4"), inset = c(0,-0.275))
+##Heatmap with Clusters Ordered # 1 - 4
+data_heatmap_CCLE <- heatmap.2(CCLE_heat_mat_sort,Colv = NULL, Rowv = TRUE, dendrogram = 'row',
+                               col = heatmap_color,scale="none", margins=c(4,6),
+                               cexRow = 0.01 + 1/log10(dim(CCLE_heat_mat_sort)[1]),cexCol = 0.025 + 1/log10(dim(CCLE_heat_mat_sort)[2]),labCol=NA, labRow = rownames(CCLE_heat_mat_sort),
+                               key = T, keysize = 1, trace = "none", density.info = 'none',
+                               key.title = NA, key.ylab = NA, key.xlab = NA, ColSideColors = CCLE_heat_mat_sort_colors, lhei = c(1,10))
+legend("bottom", legend = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4"), bty = "n", xpd = TRUE, horiz = TRUE, fill = c("#B2DF8A", "#33A02C", "#A6CEE3", "#1F78B4"), inset = c(0,-0.2))
+
+##Write Differential Gene Expression Analysis Results into a Table
+write.table(allGenes_table,"allGenes_table.txt", sep = "\t")
+write.table(DEgenes_treat_1,"DEgenes_treat_1.txt", sep = "\t")
+write.table(DEgenes_treat_2,"DEgenes_treat_2.txt", sep = "\t")
+write.table(DEgenes_treat_3,"DEgenes_treat_3.txt", sep = "\t")
+write.table(DEgenes_treat_4,"DEgenes_treat_4.txt", sep = "\t")
+##################End of Differential Gene Expression by Cluster Analysis, Comparison is One group vs. Rest###################
+
+##################Start of Differential Gene Set Expression by Clusters, Comparison is One group vs. Rest###################
+##Set parameters
+mad_max_CCLE <- 10000 #MAD threshold for CCLE data for gene set analysis 
+mad_max_RNAseq <- 10000 #MAD threshold for RNAseq data for gene set analysis
+adjPvalueCutoff <- 0.05 #set FDR threshold for Benjamini-Hochberg multihypothesis testing significance correction
+#adjPvalueCutoff <- 0.001 #set FDR threshold for Benjamini-Hochberg multihypothesis testing significance correction
+gene_set <- "c2.all.v5.1.symbols.gmt" #gene_set to evaluate with GSVA
+min.sz = 1
+max.sz = Inf
+mx.diff = FALSE
+gsc <- getGmt(gene_set)
+
+##Recompute CCLE and RNASeq Datasets with top 15000 genes ranked by MAD
+##calculate median absolute deviation (MAD) of microarray data and determine top genes with highest MAD (i.e. variability), set number of genes with variable 'mad_max_CCLE'
+mads_ComBat <- apply(ComBat_mat_CCLE,1,mad)#calculate median absolute deviation of each row
+if (plot_mad == TRUE) plot(mads_ComBat[rev(order(mads_ComBat))], main = "CCLE: Ordered MAD of Dataset Genes", ylab = "MAD", xlab = "Genes Ranked By MAD")
+my_mat_mad_Combat <- ComBat_mat_CCLE[rev(order(mads_ComBat))[1:mad_max_CCLE],]#reduce data set to most variable genes as set by variable 'mad_max_CCLE'
+my_mat_mad_Combat <- as.matrix(my_mat_mad_Combat)
+##calculate median absolute deviation (MAD) of RNA-seq data and determine top genes with highest MAD (i.e. variability), set number of genes with variable 'mad_max_RNASeq'
+mads_RNASeq <- apply(mat_trans,1,mad)#calculate median absolute deviation of each row
+if (plot_mad == TRUE) plot(mads_RNASeq[rev(order(mads_RNASeq))], main = "RNASeq: Ordered MAD of Dataset Genes", ylab = "MAD", xlab = "Genes Ranked By MAD")
+my_mat_mad_RNASeq <- mat_trans[rev(order(mads_RNASeq))[1:mad_max_RNAseq],]#reduce data set to most variable genes as set by variable 'mad_max_RNASeq'
+my_mat_mad_RNASeq <- as.matrix(my_mat_mad_RNASeq)
+
+geneSet_data_matrix_CCLE <- my_mat_mad_Combat #use CCLE dataset 'my_mat_mad_Combat' as is not gene centered data
+geneSet_data_matrix_RNASeq <- my_mat_mad_RNASeq #yse RNASeq dataset 'my_mat_mad_RNASeq' as is not gene centered
+##calculate gene set enrichment scores for CCLE dataset using gene set of interest 'gene_set' with Bioconductor package 'GSVA'
+my_es_CCLE <- gsva(geneSet_data_matrix_CCLE, gsc, min.sz = min.sz, max.sz = max.sz, mx.diff = mx.diff, verbose = TRUE)$es.obs
+##calculate gene set enrichment scores for RNASeq dataset using gene set of interest 'gene_set' with Bioconductor package 'GSVA'
+#my_es_RNASeq <- gsva(geneSet_data_matrix_RNASeq, gsc, min.sz = min.sz, max.sz = max.sz, mx.diff = mx.diff, verbose = TRUE)$es.obs 
+#NOTE regarding previous line: can potentially perform geneSet enrichment analysis with RNASeq data if raw RNASeq data is unavailable for processing
+
+##Differntial Enrichment Score Analysis of Gene Sets using topTable function to test for significance between an individual cluster versus all other clusters (ANOVA-like analysis)
+design_geneSet_table <- model.matrix(~0+factor(CCLE_cluster_4))
+colnames(design_geneSet_table) <- c("A","B","C","D")    
+fit_geneSet_table <- lmFit(my_es_CCLE,design_geneSet_table)
+#contrast_matrix_gene_table <- makeContrasts("B-A","C-A","C-B","D-A", "D-B", "D-C", levels = design_gene_3) #pairwise comparison contrast matrix
+contrast_matrix_geneSet_table <- makeContrasts("A-(B+C+D)/3","B-(A+C+D)/3","C-(A+B+D)/3","D-(A+B+C)/3", levels = design_geneSet_table)
+fit_geneSet_table <- contrasts.fit(fit_geneSet_table, contrast_matrix_geneSet_table)
+fit_geneSet_table <- eBayes(fit_geneSet_table)
+allGeneSet_table <- topTable(fit_geneSet_table,number = Inf)
+##Set cutoff for fold-change in enrichment score by average absolute values of top and bottom quartiles
+geneSet_quantiles <- quantile(c(allGeneSet_table$A..B.C.D..3, allGeneSet_table$B..A.C.D..3, allGeneSet_table$C..A.B.D..3, allGeneSet_table$D..A.B.C..3))
+lower_quantile <- geneSet_quantiles['25%']
+upper_quantile <- geneSet_quantiles['75%']
+lfc <- as.double((abs(lower_quantile) + abs(upper_quantile))/2)
+##Determine differentially enriched gene sets with ANOVA-like test
+allGeneSet_table <- topTable(fit_geneSet_table,number = Inf, p.value = adjPvalueCutoff, lfc = lfc)
+##Output results of significance testing using decideTests
+res_geneSet_table <- decideTests(fit_geneSet_table, p.value = adjPvalueCutoff, lfc = lfc, adjust.method = "BH")
+summary(res_geneSet_table)
+
+##Differential Gene Set Enrichment Analysis using treat() and TopTreat() functions to test for significance among particular cluster versus all other cluster comparisons
+design_geneSet_treat <- model.matrix(~0+factor(CCLE_cluster_4))
+colnames(design_geneSet_treat) <- c("A","B","C","D")    
+fit_geneSet_treat <- lmFit(my_es_CCLE,design_geneSet_treat)
+#contrast_matrix_gene_3 <- makeContrasts("B-A","C-A","C-B","D-A", "D-B", "D-C", levels = design_gene_3)
+contrast_matrix_geneSet_treat <- makeContrasts("A-(B+C+D)/3","B-(A+C+D)/3","C-(A+B+D)/3","D-(A+B+C)/3", levels = design_geneSet_treat)
+fit_geneSet_treat <- contrasts.fit(fit_geneSet_treat, contrast_matrix_geneSet_treat)
+fit_geneSet_treat <- treat(fit_geneSet_treat, lfc = lfc)
+DEgeneSET_treat_1 <- topTreat(fit_geneSet_treat, number = Inf, p.value = adjPvalueCutoff, adjust = "BH", coef = 1)
+DEgeneSET_treat_2 <- topTreat(fit_geneSet_treat, number = Inf, p.value = adjPvalueCutoff, adjust = "BH", coef = 2)
+DEgeneSET_treat_3 <- topTreat(fit_geneSet_treat, number = Inf, p.value = adjPvalueCutoff, adjust = "BH", coef = 3)
+DEgeneSET_treat_4 <- topTreat(fit_geneSet_treat, number = Inf, p.value = adjPvalueCutoff, adjust = "BH", coef = 4)
+
+##Create vector of gene sets to be used in the heatmap, includes the gene sets found to be significant in topTreat() analysis
+heatmap_geneSet <- unique(c(rownames(DEgeneSET_treat_1), rownames(DEgeneSET_treat_2), rownames(DEgeneSET_treat_3), rownames(DEgeneSET_treat_4)))
+
+##Create vector of gene sets to be used in the heatmap, containing the gene sets found to be significant in topTreat() analysis
+##Create CCLE Microarray Expression Heatmap of Differential Enriched Gene Sets
+#heat_mat <- DE_data_matrix_CCLE[match(rownames(allGenes_treat),rownames(DE_data_matrix_CCLE)),]
+heat_mat_gene_set <- my_es_CCLE[match(heatmap_geneSet,rownames(my_es_CCLE)),]
+cluster_4_not <- t(as.matrix(as.numeric(CCLE_cluster_4)))
+heat_mat_sort_gene_set <- rbind(cluster_4_not,heat_mat_gene_set)
+heat_mat_sort_gene_set <- as.matrix(heat_mat_sort_gene_set[,order(heat_mat_sort_gene_set[1,])])
+
+DEgeneSet_cluster_1_ind <- which(heat_mat_sort_gene_set[1,] == 1)
+DEgeneSet_cluster_2_ind <- which(heat_mat_sort_gene_set[1,] == 2)
+DEgeneSet_cluster_3_ind <- which(heat_mat_sort_gene_set[1,] == 3)
+DEgeneSet_cluster_4_ind <- which(heat_mat_sort_gene_set[1,] == 4)
+DEgeneSet_reorder_ind <- c(DEgeneSet_cluster_1_ind,DEgeneSet_cluster_3_ind,DEgeneSet_cluster_2_ind,DEgeneSet_cluster_4_ind)
+
+num_clust_1 <- length(which(heat_mat_sort_gene_set[1,]==1))
+num_clust_2 <- length(which(heat_mat_sort_gene_set[1,]==2))
+num_clust_3 <- length(which(heat_mat_sort_gene_set[1,]==3))
+num_clust_4 <- length(which(heat_mat_sort_gene_set[1,]==4))
+CCLE_heat_mat_sort_colors <- c(rep("#B2DF8A",num_clust_1),rep("#A6CEE3", num_clust_3), rep("#33A02C", num_clust_2), rep("#1F78B4", num_clust_4))
+
+CCLE_heat_mat_geneSet_sort <- heat_mat_sort_gene_set[-1,DEgeneSet_reorder_ind]
+
+##Create vector of color values corresponding to grouping of samples into particular clusters
+sub_1 <- replace(CCLE_cluster_4, CCLE_cluster_4 == 1, "#B2DF8A")
+sub_2 <- replace(sub_1, CCLE_cluster_4 == 2, "#33A02C")
+sub_3 <- replace(sub_2, CCLE_cluster_4 == 3, "#A6CEE3")
+sub_4_CCLE <- replace(sub_3, CCLE_cluster_4 == 4, "#1F78B4")
+sample_colors_CCLE <- sub_4_CCLE
+
+##create side color along row to indicate geneSet categories
+geneSet_group_labels <- read.delim("heatmap_rownames_2.txt", header = FALSE, sep = "\t")
+col_pal <- brewer.pal(10,"Paired")
+geneSet_group_label_1 <- geneSet_group_labels[geneSet_group_labels[,2] == 1,1]
+geneSet_group_label_2 <- geneSet_group_labels[geneSet_group_labels[,2] == 2,1]
+geneSet_group_label_3 <- geneSet_group_labels[geneSet_group_labels[,2] == 3,1]
+geneSet_group_label_4 <- geneSet_group_labels[geneSet_group_labels[,2] == 4,1]
+ind_group_label_1 <- match(geneSet_group_label_1,rownames(CCLE_heat_mat_geneSet_sort))
+ind_group_label_2 <- match(geneSet_group_label_2,rownames(CCLE_heat_mat_geneSet_sort))
+ind_group_label_3 <- match(geneSet_group_label_3,rownames(CCLE_heat_mat_geneSet_sort))
+ind_group_label_4 <- match(geneSet_group_label_4,rownames(CCLE_heat_mat_geneSet_sort))
+RowSideColors <- NULL
+RowSideColors[ind_group_label_1] <- col_pal[9]
+RowSideColors[ind_group_label_2] <- col_pal[10]
+RowSideColors[ind_group_label_3] <- col_pal[7]
+RowSideColors[ind_group_label_4] <- col_pal[5]
+
+##set brewer.pal heatmap colors
+heatmap_color <- rev(brewer.pal(9, "YlGnBu"))
+
+##Plot heatmap of CCLE Microarray expression data
+# ##Heatmap with Column Dendrogram
+# data_heatmap_CCLE_geneSet <- heatmap.2(heat_mat_gene_set,Colv = as.dendrogram(CCLE_tree), Rowv = TRUE, dendrogram = 'both',
+#                                        col = heatmap_color,scale="none", margins=c(2,5),
+#                                        cexRow = 0.01 + 1/log10(dim(heat_mat)[1]),cexCol = 0.025 + 1/log10(dim(heat_mat)[2]),labCol=NA, labRow = rownames(heat_mat_gene_set),
+#                                        key = T, keysize = 1, trace = "none", density.info = 'none',
+#                                        key.title = NA, ColSideColors = sample_colors_CCLE, RowSideColors = RowSideColors)
+# legend("bottom", legend = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4"), bty = "n", xpd = TRUE, horiz = TRUE, fill = c("#B2DF8A", "#33A02C", "#A6CEE3", "#1F78B4"), inset = c(0,-0.275))
+##Plot heatmap of CCLE Microarray expression data
+##Heatmap with Clusters Ordered # 1 - 4
+data_heatmap_CCLE_geneSet <- heatmap.2(CCLE_heat_mat_geneSet_sort,Colv = NULL, Rowv = TRUE, dendrogram = 'row',
+                                       col = heatmap_color,scale="none", margins=c(4,6),
+                                       cexRow = 0.01 + 1/log10(dim(CCLE_heat_mat_geneSet_sort)[1]),cexCol = 0.025 + 1/log10(dim(CCLE_heat_mat_geneSet_sort)[2]),labCol=NA, labRow = rownames(CCLE_heat_mat_geneSet_sort),
+                                       key = T, keysize = 1, trace = "none", density.info = 'none',
+                                       key.title = NA, key.ylab = NA, key.xlab = NA, ColSideColors = CCLE_heat_mat_sort_colors, RowSideColors = RowSideColors, lhei = c(1,10))
+legend("bottom", legend = c("Cluster 1", "Cluster 2", "Cluster 3", "Cluster 4"), bty = "n", xpd = TRUE, horiz = TRUE, fill = c("#B2DF8A", "#33A02C", "#A6CEE3", "#1F78B4"), inset = c(0,-0.2))
+
+
+##Write Differential Gene Set Enrichment Analysis Results into a Table
+write.table(allGeneSet_table,"allGeneSET_table.txt", sep = "\t")
+write.table(DEgeneSET_treat_1,"DEgeneSET_treat_1.txt", sep = "\t")
+write.table(DEgeneSET_treat_2,"DEgeneSET_treat_2.txt", sep = "\t")
+write.table(DEgeneSET_treat_3,"DEgeneSET_treat_3.txt", sep = "\t")
+write.table(DEgeneSET_treat_4,"DEgeneSET_treat_4.txt", sep = "\t")
+heatmap_rownames <- rownames(heat_mat_gene_set[rev(data_heatmap_CCLE_geneSet$rowInd),])
+write.table(heatmap_rownames, "heatmap_rownames_2.txt", sep = "\t")
+
+##GO annotation of GeneSet Heatmap Enrichment Subsets
+geneSet_genes <- read.delim('go_annot_SCLC_gene_sets_revised_2.txt', header = FALSE, sep = "\t")
+geneSet_gene_groups <- geneSet_genes[,2]
+work_dir <- getwd() #get working directory
+file_path_annot <- file.path(work_dir, "homo_sapiens_gene_info.txt")#create file path
+annot = read.delim(file_path_annot, header = T, sep = "\t");
+##Match probes in the data set to the probe IDs in the annotation file
+probes = geneSet_genes[,1]
+probes2annot = match(probes, annot$Symbol)
+##Get the corresponding Locus Link IDs
+allLLIDs = annot$GeneID[probes2annot];
+cache(GOenr_differential_gene_sets <- GOenrichmentAnalysis(geneSet_gene_groups, allLLIDs, organism = "human", nBestP = 50), dir=".", prefix=paste("tmp_R_cache_WGCNA_"))
+tab_differential_genes_sets = GOenr_differential_gene_sets$bestPTerms[[4]]$enrichment
+##################End of Differential Gene Set Expression by Clusters, Comparison is One group vs. Rest###################
+##################End of Differential Gene and Gene Set Analysis###################
+
+##################Start of geNetClassifier R Package for Building Gene Expression Classifier based on CCLE SCLC Dataset###################
+##set paramters for geNetClassifier
+cluster_group_labels <- CCLE_cluster_4 #select which ConsensusClusterPlus() result for k=2,3,4
+classifier_data_matrix_CCLE <- my_mat_mad_Combat #use CCLE dataset 'my_mat_mad_Combat' as is not gene centered data
+
+##Calculate Silhouette Widths to Determine Core Samples of ConsensusClusterPlus Cluster Groups in CCLE SCLC Cell Lines
+dat_transpose <- t(classifier_data_matrix_CCLE) #transpose data matrix for input into dissimilarity matrix function 'daisy'
+cluster <- cluster_group_labels #set data vector containing sample cluster assignments from ConsensusClusterPlus()
+cluster.d <- daisy(dat_transpose,metric="euclidean") #calculate dissimilarity among samples in data matrix via euclidean distance
+cluster.s <- silhouette(as.numeric(CCLE_cluster_4),cluster.d) #calculate silhouette widths of samples within each cluster
+plot(cluster.s, main = "Silhouette Plot of CCLE SCLC Samples by Consensus Clusters", do.col.sort = T, col = c("#B2DF8A", "#33A02C", "#A6CEE3", "#1F78B4")) #create silhouette plot using colors stored in 'CCLE_results_seed[[4]][["clrs"]]'
+
+##Determine CCLE Cell Line Samples with Positive Silhouette Widths
+##Determine top 'n' samples that are closest in distance for each cluster group for constructing classifier
+n <- 8 #number of samples per cluster chosen for building classifier with geNetClassifier (number of samples per cluster group should be equal according to geNetClassifier authors)
+rownames(cluster.s) <- names(cluster)
+sort_cluster.s <- sortSilhouette(cluster.s) #sort silhouette object 'cluster.s' by cluster group and silouette width
+p <- as.data.frame(cbind(rownames(sort_cluster.s),sort_cluster.s[,1],sort_cluster.s[,3])) #create dataframe of silhouette object 'sort_cluster.s'
+colnames(p) <- c("names", "cluster", "sil_width")
+sil_tbl <- group_by(tbl_df(p), cluster)
+top_n_lines_by_cluster <- as.data.frame(top_n(sil_tbl,n,sil_width)) #determine top 'n' characteristic cell lines by cluster group
+CCLE_matrix_ind <- match(top_n_lines_by_cluster[,1],colnames(classifier_data_matrix_CCLE))
+#classifier_matrix_CCLE <- classifier_data_matrix_CCLE[,CCLE_matrix_ind]
+#ind_sample_labels <- top_n_lines_by_cluster[,2]
+
+##Build a classifier based on CCLE SCLC ConsensusClusterPlus Results
+SampleLabels_1 <- cluster_group_labels
+eset_order <- rbind(SampleLabels_1,classifier_data_matrix_CCLE)
+eset_order <- eset_order[,CCLE_matrix_ind]
+eset_order <- eset_order[,order(eset_order[1,])]
+sampleLabels <- as.factor(eset_order[1,])
+eset_order_sub <- eset_order[-1,]
+eset <- ExpressionSet(eset_order_sub)
+##Build classifier based on subset of CCLE cell lines, 8 samples/cell lines per cluster
+#cache(SCLC_classifier_2 <- geNetClassifier(eset, sampleLabels = sampleLabels, plotsName = "SCLC_Classifier_2", estimateGError = TRUE),dir=".", prefix="tmp_R_cache_geNetClassifier_")
+cache(SCLC_classifier_4 <- geNetClassifier(eset, sampleLabels = sampleLabels, skipInteractions = F, plotsName = "SCLC_Classifier_4", estimateGError = TRUE),dir=".", prefix="tmp_R_cache_geNetClassifier_")
+
+classifier <- SCLC_classifier_4 #set variable to store classifier for downstream analysis
+
+##Test classifier against remaining data
+##Note: Testing classifier with microarrays that were left out of classifier construction 
+##due to low or negative silhouette width leads to poor classification results 
+eset_order_test <- rbind(SampleLabels_1,classifier_data_matrix_CCLE)
+eset_order_test <- eset_order_test[,-CCLE_matrix_ind]
+eset_order_test <- eset_order_test[,order(eset_order_test[1,])]
+testLabels <- as.factor(eset_order_test[1,])
+eset_test <- ExpressionSet(eset_order_test)
+queryResult <- queryGeNetClassifier(classifier,eset_test,verbose = TRUE)
+confusionMatrix <- table(testLabels, queryResult$class)
+externalValidation.stats(confusionMatrix)
+
+##Analyze genes/gene networks of geNetClassifier for CCLE SCLC Dataset ConsensusClusterPlus() result w/ k = 4
+##Plot Gene Networks of Clusters
+top50g <- getRanking(classifier@genesRanking, showGeneID = TRUE)$geneID[1:100,]
+top50gSubNet <- getSubNetwork(classifier@genesNetwork, top50g)
+top50gInfo <- lapply(genesDetails(classifier@genesRanking), function(x) x[1:100,])
+cluster_1_network <- plotNetwork(genesNetwork = top50gSubNet$`1`, genesInfo = top50gInfo$`1`)
+cluster_2_network <- plotNetwork(genesNetwork = top50gSubNet$`2`, genesInfo = top50gInfo$`2`)
+cluster_3_network <- plotNetwork(genesNetwork = top50gSubNet$`3`, genesInfo = top50gInfo$`3`)
+cluster_4_network <- plotNetwork(genesNetwork = top50gSubNet$`4`, genesInfo = top50gInfo$`4`)
+##Obtain ranking of top genes in each sample cluster
+subRanking <- getTopRanking(classifier@genesRanking, 200)
+Ranking <- getRanking(subRanking)
+cluster_1_gene_details <- genesDetails(subRanking)$'1'
+cluster_2_gene_details <- genesDetails(subRanking)$'2'
+cluster_3_gene_details <- genesDetails(subRanking)$'3'
+cluster_4_gene_details <- genesDetails(subRanking)$'4'
+##Export top genes in each cluster to tab delimited files
+write.table(Ranking,"Ranking_top200_genes_by_cluster.txt", sep = "\t")
+write.table(cluster_1_gene_details, "cluster_1_gene_details.txt", sep = "\t")
+write.table(cluster_2_gene_details, "cluster_2_gene_details.txt", sep = "\t")
+write.table(cluster_3_gene_details, "cluster_3_gene_details.txt", sep = "\t")
+write.table(cluster_4_gene_details, "cluster_4_gene_details.txt", sep = "\t")
+##################End of geNetClassifier R Package for Building Gene Expression Classifier based on CCLE SCLC Dataset###################
+
+###################Start of Nearest Centroid Correspondance of Cluster Groups Between CCLE SCLC Dataset and George et al. Nature (2015) RNASeq Dataset####################
+##Set parameters
+plot_mad <- FALSE
+mad_max_CCLE <- 15000 #MAD threshold for CCLE data 
+mad_max_RNAseq <- 15000 #MAD threshold for RNAseq data
+
+##Recompute CCLE and RNASeq Datasets with top 15000 genes ranked by MAD
+##calculate median absolute deviation (MAD) of microarray data and determine top genes with highest MAD (i.e. variability), set number of genes with variable 'mad_max_CCLE'
+mads_ComBat <- apply(ComBat_mat_CCLE,1,mad)#calculate median absolute deviation of each row
+if (plot_mad == TRUE) plot(mads_ComBat[rev(order(mads_ComBat))], main = "Ordered MAD of Dataset Genes", ylab = "MAD", xlab = "Genes Ranked By MAD")
+my_mat_mad_Combat <- ComBat_mat_CCLE[rev(order(mads_ComBat))[1:mad_max_CCLE],]#reduce data set to most variable genes as set by variable 'mad_max_CCLE'
+my_mat_mad_Combat <- as.matrix(my_mat_mad_Combat)
+##calculate median absolute deviation (MAD) of RNA-seq data and determine top genes with highest MAD (i.e. variability), set number of genes with variable 'mad_max_RNASeq'
+mads_RNASeq <- apply(mat_trans,1,mad)#calculate median absolute deviation of each row
+if (plot_mad == TRUE) plot(mads_RNASeq[rev(order(mads_RNASeq))], main = "Ordered MAD of Dataset Genes", ylab = "MAD", xlab = "Genes Ranked By MAD")
+my_mat_mad_RNASeq <- mat_trans[rev(order(mads_RNASeq))[1:mad_max_RNAseq],]#reduce data set to most variable genes as set by variable 'mad_max_RNASeq'
+my_mat_mad_RNASeq <- as.matrix(my_mat_mad_RNASeq)
+
+##gene median center CCLE data
+dat_cent_CCLE <- sweep(my_mat_mad_Combat,1,apply(my_mat_mad_Combat,1,median,na.rm=T),"-")#gene median center data
+dat_cent_CCLE <- as.matrix(dat_cent_CCLE)#convert data frame 'dat_mad_cent' to data matrix
+##gene median center RNASeq data
+dat_cent_RNASeq <- sweep(my_mat_mad_RNASeq,1,apply(my_mat_mad_RNASeq,1,median,na.rm=T),"-")#gene median center data
+dat_cent_RNASeq <- as.matrix(dat_cent_RNASeq)#convert data frame 'dat_mad_cent' to data matrix
+##set variables for downstream analysis
+use_data_matrix_CCLE_2 <- dat_cent_CCLE #set variable 'use_data_matrix_CCLE_2'
+use_data_matrix_RNASeq_2 <- dat_cent_RNASeq #set variable 'use_data_matrix_RNASeq_2' 
+
+##Obtain CCLE SCLC Classifier Genes by Cluster Group 
+##Obtain Genes Ranked by Posterior Probablity within each Cluster Group
+ranked_genes_class_1 <- genesDetails(classifier@genesRanking)$'1'
+ranked_genes_class_2 <- genesDetails(classifier@genesRanking)$'2'
+ranked_genes_class_3 <- genesDetails(classifier@genesRanking)$'3'
+ranked_genes_class_4 <- genesDetails(classifier@genesRanking)$'4'
+##Subset Genes with Posterior Probability >= 0.95
+sig_genes_class_1 <- rownames(ranked_genes_class_1[ranked_genes_class_1$postProb >= 0.95,])
+sig_genes_class_2 <- rownames(ranked_genes_class_2[ranked_genes_class_2$postProb >= 0.95,])
+sig_genes_class_3 <- rownames(ranked_genes_class_3[ranked_genes_class_3$postProb >= 0.95,])
+sig_genes_class_4 <- rownames(ranked_genes_class_4[ranked_genes_class_4$postProb >= 0.95,])
+##Connect with old code
+SCLC_class_1 <- sig_genes_class_1
+SCLC_class_2 <- sig_genes_class_2
+SCLC_class_3 <- sig_genes_class_3
+SCLC_class_4 <- sig_genes_class_4
+##Merge significant genes from each cluster group of the classifier into one vector
+sig_genes <- c(SCLC_class_1, SCLC_class_2, SCLC_class_3, SCLC_class_4)
+##Determine location of classifier genes within CCLE Dataset
+CCLE_sig_genes <- match(sig_genes,rownames(use_data_matrix_CCLE_2))
+##Determine location of classifier genes within the RNASeq Dataset
+RNASeq_sig_genes <- match(sig_genes, rownames(use_data_matrix_RNASeq_2))
+##Determine classifier genes present in both CCLE and RNASeq Datasets
+common_sig_genes <- intersect(rownames(use_data_matrix_CCLE_2[CCLE_sig_genes,]),rownames(use_data_matrix_RNASeq_2[RNASeq_sig_genes,]))
+##Determine row index of classifier genes present in both datasets
+CCLE_common <- match(common_sig_genes, rownames(use_data_matrix_CCLE_2))
+RNASeq_common <- match(common_sig_genes, rownames(use_data_matrix_RNASeq_2))
+
+##Calculate CCLE Centroids By Cluster Group
+CCLE_col_ind1 <- which(CCLE_cluster_4 == 1)
+CCLE_col_ind2 <- which(CCLE_cluster_4 == 2)
+CCLE_col_ind3 <- which(CCLE_cluster_4 == 3)
+CCLE_col_ind4 <- which(CCLE_cluster_4 == 4)
+CCLE_centroid_class_1 <- apply(use_data_matrix_CCLE_2[CCLE_common,CCLE_col_ind1],1, median)
+CCLE_centroid_class_2 <- apply(use_data_matrix_CCLE_2[CCLE_common,CCLE_col_ind2],1, median)
+CCLE_centroid_class_3 <- apply(use_data_matrix_CCLE_2[CCLE_common,CCLE_col_ind3],1, median)
+CCLE_centroid_class_4 <- apply(use_data_matrix_CCLE_2[CCLE_common,CCLE_col_ind4],1, median)
+
+##Calculate RNASeq Centroids By Cluster Group
+RNASeq_col_ind1 <- which(RNAseq_cluster_4 == 1)
+RNASeq_col_ind2 <- which(RNAseq_cluster_4 == 2)
+RNASeq_col_ind3 <- which(RNAseq_cluster_4 == 3)
+RNASeq_col_ind4 <- which(RNAseq_cluster_4 == 4)
+RNASeq_centroid_class_1 <- apply(use_data_matrix_RNASeq_2[RNASeq_common,RNASeq_col_ind1],1, median)
+RNASeq_centroid_class_2 <- apply(use_data_matrix_RNASeq_2[RNASeq_common,RNASeq_col_ind2],1, median)
+RNASeq_centroid_class_3 <- apply(use_data_matrix_RNASeq_2[RNASeq_common,RNASeq_col_ind3],1, median)
+RNASeq_centroid_class_4 <- apply(use_data_matrix_RNASeq_2[RNASeq_common,RNASeq_col_ind4],1, median)
+
+##Correleate Centroids Between CCLE clusters and RNASeq clusters (k = 4)
+CCLE_centroids <- cbind(CCLE_centroid_class_1, CCLE_centroid_class_2, CCLE_centroid_class_3, CCLE_centroid_class_4)
+RNASeq_centroids <- cbind(RNASeq_centroid_class_1, RNASeq_centroid_class_2, RNASeq_centroid_class_3, RNASeq_centroid_class_4)
+centroid_correlation <- cor(CCLE_centroids,RNASeq_centroids)
+distance_centroid <- 1 - centroid_correlation #Calculate distance between CCLE and RNASeq centroids
+distance_centroid <- distance_centroid[c(3,1,4,2),]
+
+heatmap_centroid_color <- brewer.pal(6, "YlGnBu")
+
+heatmap_CCLE_TCGA_centroid <- heatmap.2(distance_centroid,Colv = NULL, Rowv = NULL, dendrogram = 'none',
+                                        col = heatmap_centroid_color,scale="none", margins=c(10,10),
+                                        cexRow = 0.001 + 1/log10(dim(distance_centroid)[1]),cexCol = 0.001 + 1/log10(dim(distance_centroid)[2]),
+                                        key = T, keysize = 1, trace = "none", density.info = 'none',
+                                        key.title = NA, labRow = c("CCLE 3", "CCLE 1", "CCLE 4", "CCLE 2"),
+                                        labCol = c("TCGA 1", "TCGA 2", "TCGA 3", "TCGA 4"), cellnote = as.matrix(round(distance_centroid,2)),
+                                        notecol = "black")
+
+# ##Perform GO annotation of classifier genes within each cluster
+# cluster_1_genes <- common_sig_genes[match(SCLC_class_1,common_sig_genes)]
+# cluster_1_genes <- cluster_1_genes[complete.cases(cluster_1_genes)]
+# cluster_2_genes <- common_sig_genes[match(SCLC_class_2,common_sig_genes)]
+# cluster_2_genes <- cluster_2_genes[complete.cases(cluster_2_genes)]
+# cluster_3_genes <- common_sig_genes[match(SCLC_class_3,common_sig_genes)]
+# cluster_3_genes <- cluster_3_genes[complete.cases(cluster_3_genes)]
+# cluster_4_genes <- common_sig_genes[match(SCLC_class_4,common_sig_genes)]
+# cluster_4_genes <- cluster_4_genes[complete.cases(cluster_4_genes)]
+# go_group_annot <- c(rep("Cluster 1", length(cluster_1_genes)), #create cluster group annotation for classifier genes
+#                     rep("Cluster 2", length(cluster_2_genes)),
+#                     rep("Cluster 3", length(cluster_3_genes)),
+#                     rep("Cluster 4", length(cluster_4_genes)))
+# ##Read in the probe annotation
+# work_dir <- getwd() #get working directory
+# file_path_annot <- file.path(work_dir, "homo_sapiens_gene_info.txt")#create file path
+# annot = read.delim(file_path_annot, header = T, sep = "\t");
+# ##Match probes in the data set to the probe IDs in the annotation file
+# probes = common_sig_genes
+# probes2annot = match(probes, annot$Symbol)
+# ##Get the corresponding Locuis Link IDs
+# allLLIDs = annot$GeneID[probes2annot];
+# GOenr_classifier = GOenrichmentAnalysis(go_group_annot, allLLIDs, organism = "human", nBestP = 20)
+# tab_classifier = GOenr$bestPTerms[[4]]$enrichment
+###################End of Nearest Centroid Correspondance of Cluster Groups Between CCLE SCLC Dataset and George et al. Nature (2015) RNASeq Dataset####################
+
+###################Start of SigClust() to Perform Significance Testing of Cluster Groups for ConsensusClusterPlus() result with k = 4 for CCLE and RNASeq datasets####################
+##CCLE SigClust()
+##Assess significance of pairwise clustering results for k = 4 for CCLE using package 'Sigclust'
+nsim <- 1000
+nrep <- 1
+icovest <- 3
+CCLE_sigdat <- t(my_mat_mad_Combat)
+CCLE_ind_1 <- which(CCLE_cluster_4 == 1)
+CCLE_ind_2 <- which(CCLE_cluster_4 == 2)
+CCLE_ind_3 <- which(CCLE_cluster_4 == 3)
+CCLE_ind_4 <- which(CCLE_cluster_4 == 4)
+
+##sigclust between Cluster 1 and Cluster 2
+CCLE_sigdat_1_2 <- rbind(CCLE_sigdat[CCLE_ind_1,], CCLE_sigdat[CCLE_ind_2,])
+label_1_2 <- c(rep(1,length(CCLE_ind_1)),rep(2,length(CCLE_ind_2)))
+cache(CCLE_pvalue_1_2 <- sigclust(CCLE_sigdat_1_2, nsim = nsim, nrep = nrep, labflag = 1, label = label_1_2, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+##sigclust between Cluster 1 and Cluster 3
+CCLE_sigdat_1_3 <- rbind(CCLE_sigdat[CCLE_ind_1,], CCLE_sigdat[CCLE_ind_3,])
+label_1_3 <- c(rep(1,length(CCLE_ind_1)),rep(2,length(CCLE_ind_3)))
+cache(CCLE_pvalue_1_3 <- sigclust(CCLE_sigdat_1_3, nsim = nsim, nrep = nrep, labflag = 1, label = label_1_3, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+##sigclust between Cluster 1 and Cluster 4
+CCLE_sigdat_1_4 <- rbind(CCLE_sigdat[CCLE_ind_1,], CCLE_sigdat[CCLE_ind_4,])
+label_1_4 <- c(rep(1,length(CCLE_ind_1)),rep(2,length(CCLE_ind_4)))
+cache(CCLE_pvalue_1_4 <- sigclust(CCLE_sigdat_1_4, nsim = nsim, nrep = nrep, labflag = 1, label = label_1_4, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+
+##sigclust between Cluster 2 and Cluster 3
+CCLE_sigdat_2_3 <- rbind(CCLE_sigdat[CCLE_ind_2,], CCLE_sigdat[CCLE_ind_3,])
+label_2_3 <- c(rep(1,length(CCLE_ind_2)),rep(2,length(CCLE_ind_3)))
+cache(CCLE_pvalue_2_3 <- sigclust(CCLE_sigdat_2_3, nsim = nsim, nrep = nrep, labflag = 1, label = label_2_3, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+##sigclust between Cluster 2 and Cluster 4
+CCLE_sigdat_2_4 <- rbind(CCLE_sigdat[CCLE_ind_2,], CCLE_sigdat[CCLE_ind_4,])
+label_2_4 <- c(rep(1,length(CCLE_ind_2)),rep(2,length(CCLE_ind_4)))
+cache(CCLE_pvalue_2_4 <- sigclust(CCLE_sigdat_2_4, nsim = nsim, nrep = nrep, labflag = 1, label = label_2_4, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+
+##sigclust between Cluster 3 and Cluster 4
+CCLE_sigdat_3_4 <- rbind(CCLE_sigdat[CCLE_ind_3,], CCLE_sigdat[CCLE_ind_4,])
+label_3_4 <- c(rep(1,length(CCLE_ind_3)),rep(2,length(CCLE_ind_4)))
+cache(CCLE_pvalue_3_4 <- sigclust(CCLE_sigdat_3_4, nsim = nsim, nrep = nrep, labflag = 1, label = label_3_4, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+
+##FDR Corrected Sigclust CCLE_pvalues
+sig_clust_CCLE_pvalues <- c(CCLE_pvalue_1_2@pvalnorm,CCLE_pvalue_1_3@pvalnorm,CCLE_pvalue_1_4@pvalnorm,CCLE_pvalue_2_3@pvalnorm,CCLE_pvalue_2_4@pvalnorm,CCLE_pvalue_3_4@pvalnorm)
+adj_sig_clust_CCLE_pvalues <- p.adjust(sig_clust_CCLE_pvalues, method = "bonferroni")
+
+##RNASeq SigClust()
+##Assess significance of pairwise clustering results for k = 4 for RNASeq dataset using packaged 'SigClust'
+nsim <- 1000
+nrep <- 1
+icovest <- 3
+RNAseq_sigdat <- t(my_mat_mad_RNASeq)
+RNAseq_ind_1 <- which(RNAseq_cluster_4 == 1)
+RNAseq_ind_2 <- which(RNAseq_cluster_4 == 2)
+RNAseq_ind_3 <- which(RNAseq_cluster_4 == 3)
+RNAseq_ind_4 <- which(RNAseq_cluster_4 == 4)
+
+##sigclust between Cluster 1 and Cluster 2
+RNAseq_sigdat_1_2 <- rbind(RNAseq_sigdat[RNAseq_ind_1,], RNAseq_sigdat[RNAseq_ind_2,])
+label_1_2 <- c(rep(1,length(RNAseq_ind_1)),rep(2,length(RNAseq_ind_2)))
+cache(RNAseq_pvalue_1_2 <- sigclust(RNAseq_sigdat_1_2, nsim = nsim, nrep = nrep, labflag = 1, label = label_1_2, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+##sigclust between Cluster 1 and Cluster 3
+RNAseq_sigdat_1_3 <- rbind(RNAseq_sigdat[RNAseq_ind_1,], RNAseq_sigdat[RNAseq_ind_3,])
+label_1_3 <- c(rep(1,length(RNAseq_ind_1)),rep(2,length(RNAseq_ind_3)))
+cache(RNAseq_pvalue_1_3 <- sigclust(RNAseq_sigdat_1_3, nsim = nsim, nrep = nrep, labflag = 1, label = label_1_3, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+##sigclust between Cluster 1 and Cluster 4
+RNAseq_sigdat_1_4 <- rbind(RNAseq_sigdat[RNAseq_ind_1,], RNAseq_sigdat[RNAseq_ind_4,])
+label_1_4 <- c(rep(1,length(RNAseq_ind_1)),rep(2,length(RNAseq_ind_4)))
+cache(RNAseq_pvalue_1_4 <- sigclust(RNAseq_sigdat_1_4, nsim = nsim, nrep = nrep, labflag = 1, label = label_1_4, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+
+##sigclust between Cluster 2 and Cluster 3
+RNAseq_sigdat_2_3 <- rbind(RNAseq_sigdat[RNAseq_ind_2,], RNAseq_sigdat[RNAseq_ind_3,])
+label_2_3 <- c(rep(1,length(RNAseq_ind_2)),rep(2,length(RNAseq_ind_3)))
+cache(RNAseq_pvalue_2_3 <- sigclust(RNAseq_sigdat_2_3, nsim = nsim, nrep = nrep, labflag = 1, label = label_2_3, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+##sigclust between Cluster 2 and Cluster 4
+RNAseq_sigdat_2_4 <- rbind(RNAseq_sigdat[RNAseq_ind_2,], RNAseq_sigdat[RNAseq_ind_4,])
+label_2_4 <- c(rep(1,length(RNAseq_ind_2)),rep(2,length(RNAseq_ind_4)))
+cache(RNAseq_pvalue_2_4 <- sigclust(RNAseq_sigdat_2_4, nsim = nsim, nrep = nrep, labflag = 1, label = label_2_4, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+
+##sigclust between Cluster 3 and Cluster 4
+RNAseq_sigdat_3_4 <- rbind(RNAseq_sigdat[RNAseq_ind_3,], RNAseq_sigdat[RNAseq_ind_4,])
+label_3_4 <- c(rep(1,length(RNAseq_ind_3)),rep(2,length(RNAseq_ind_4)))
+cache(RNAseq_pvalue_3_4 <- sigclust(RNAseq_sigdat_3_4, nsim = nsim, nrep = nrep, labflag = 1, label = label_3_4, icovest = icovest), dir=".", prefix=paste("tmp_R_cache_"))
+
+##FDR Corrected Sigclust RNAseq_pvalues
+sig_clust_RNAseq_pvalues <- c(RNAseq_pvalue_1_2@pvalnorm,RNAseq_pvalue_1_3@pvalnorm,RNAseq_pvalue_1_4@pvalnorm,RNAseq_pvalue_2_3@pvalnorm,RNAseq_pvalue_2_4@pvalnorm,RNAseq_pvalue_3_4@pvalnorm)
+adj_sig_clust_RNAseq_pvalues <- p.adjust(sig_clust_RNAseq_pvalues, method = "bonferroni")
+###################End of SigClust() to Perform Significance Testing of Cluster Groups for ConsensusClusterPlus() result with k = 4 for CCLE and RNASeq datasets####################
+
+###################Start of WGCNA Analysis Pipeline#####################
+#The following code has been adapted from the information available at
+#the webpage 'Tutorials for the WGCNA package, By: Peter Langfelder and Steve Horvath
+#https://labs.genetics.ucla.edu/horvath/CoexpressionNetwork/Rpackages/WGCNA/Tutorials/index.html
+
+#Set parameters
+plot_mad <- TRUE #visually inspect MAD across genes of dataset to set threshold for MAD
+mad_max_CCLE <- 10000 #MAD threshold for CCLE data 
+mad_max_RNAseq <- 10000 #MAD threshold for RNAseq data
+calc_connectivity <- TRUE #change variable to 'TRUE' in order to calculate connectivity between datasets 
+soft_threshold_plots <- TRUE; #indicate whether to compute scale free topology and mean connectivity as a function of soft-thresholding power for WGCNA analysis
+distance_measure <- "correlation"; #may be set to 'correlation' or 'euclidean'
+minModuleSize = 30; #minimum number of genes per gene module
+colors1 <- brewer.pal(n= 9, name = "Set1")
+colors2 <- brewer.pal(n= 8, name = "Dark2")
+colors_comb <- c(colors1, colors2)
+options(stringsAsFactors = FALSE);
+enableWGCNAThreads()
+gene_set <- "c2.all.v5.1.symbols.gmt" #gene_set to evaluate with GSVA
+adjPvalueCutoff <- 0.01
+logFCcutoff <- log2(2) # logFC cutoff for differential gene analysis amoung gene modules
+seed_TOM_scale <- 76176 #set seed for reproducible scaling algorithm results, used random integer function 'sample(1:100000,1)' to determine seed number
+softPower <- 6 #choose soft-thresholding power for WGCNA analysis
+
+##Recompute CCLE and RNASeq Datasets with top 10000 genes ranked by MAD
+##calculate median absolute deviation (MAD) of microarray data and determine top genes with highest MAD (i.e. variability), set number of genes with variable 'mad_max_CCLE'
+mads_ComBat <- apply(ComBat_mat_CCLE,1,mad)#calculate median absolute deviation of each row
+if (plot_mad == TRUE) plot(mads_ComBat[rev(order(mads_ComBat))], main = "Ordered MAD of Dataset Genes", ylab = "MAD", xlab = "Genes Ranked By MAD")
+my_mat_mad_Combat <- ComBat_mat_CCLE[rev(order(mads_ComBat))[1:mad_max_CCLE],]#reduce data set to most variable genes as set by variable 'mad_max_CCLE'
+my_mat_mad_Combat <- as.matrix(my_mat_mad_Combat)
+##calculate median absolute deviation (MAD) of RNA-seq data and determine top genes with highest MAD (i.e. variability), set number of genes with variable 'mad_max_RNASeq'
+mads_RNASeq <- apply(mat_trans,1,mad)#calculate median absolute deviation of each row
+if (plot_mad == TRUE) plot(mads_RNASeq[rev(order(mads_RNASeq))], main = "Ordered MAD of Dataset Genes", ylab = "MAD", xlab = "Genes Ranked By MAD")
+my_mat_mad_RNASeq <- mat_trans[rev(order(mads_RNASeq))[1:mad_max_RNAseq],]#reduce data set to most variable genes as set by variable 'mad_max_RNASeq'
+my_mat_mad_RNASeq <- as.matrix(my_mat_mad_RNASeq)
+
+##gene median center CCLE data
+dat_cent_CCLE <- sweep(my_mat_mad_Combat,1,apply(my_mat_mad_Combat,1,median,na.rm=T),"-")#gene median center data
+dat_cent_CCLE <- as.matrix(dat_cent_CCLE)#convert data frame 'dat_mad_cent' to data matrix
+##gene median center RNASeq data
+dat_cent_RNASeq <- sweep(my_mat_mad_RNASeq,1,apply(my_mat_mad_RNASeq,1,median,na.rm=T),"-")#gene median center data
+dat_cent_RNASeq <- as.matrix(dat_cent_RNASeq)#convert data frame 'dat_mad_cent' to data matrix
+##set variables for downstream analysis
+use_data_matrix_CCLE_3 <- dat_cent_CCLE #set variable 'use_data_matrix_CCLE_3'
+use_data_matrix_RNASeq_3 <- dat_cent_RNASeq #set variable 'use_data_matrix_RNASeq_3' 
+
+##################WGCNA Analysis Pipeline: Reduce CCLE and RNASeq Datasets based on Common Genes#####################
+#Determine common genes between CCLE Microarray and Nature George et al DataSets
+commonGenes <- intersect(rownames(use_data_matrix_CCLE_3), rownames(use_data_matrix_RNASeq_3))#find common genes among the 10,000 most variable genes as sorted by MAD in each dataset
+RNASeq_dat <- use_data_matrix_RNASeq_3[commonGenes,]
+CCLE_dat <- use_data_matrix_CCLE_3[commonGenes,]
+#Same data to be displayed as heatmap
+CCLE_heatmap <- my_mat_mad_Combat[commonGenes,]
+RNASeq_heatmap <- my_mat_mad_RNASeq[commonGenes,]
+
+##################WGCNA Analysis Pipeline: Determine Soft-Threshold for Correlation Matrix#####################
+#Code executes soft-thresholding analysis to offer insight into choice of soft-threshold power
+#Code will only execute if parameter 'soft_threshold_plots' = TRUE
+if (soft_threshold_plots == TRUE) {
+  powers = c(c(1:10), seq(from = 12, to=20, by=2))
+  # Call the network topology analysis function
+  cache(sft <- pickSoftThreshold(as.matrix(t(CCLE_dat)), powerVector = powers, verbose = 5),dir=".", prefix="tmp_R_cache_WGCNA_");
+  cache(sft2 <- pickSoftThreshold(as.matrix(t(RNASeq_dat)), powerVector = powers, verbose = 5),dir=".", prefix="tmp_R_cache_WGCNA_");
+  sft <- sft #can change the variable to sft2 to visualize soft-thresholding for TCGA RNASeq data
+  # Plot the results:
+  sizeGrWindow(9,5)
+  par(mfrow = c(1,2));
+  cex1 = 0.9;
+  # Scale-free topology fit index as a function of the soft-thresholding power
+  plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+       xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+       main = paste("Scale independence"));
+  text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+       labels=powers,cex=cex1,col="red");
+  # this line corresponds to using an R^2 cut-off of h
+  abline(h=0.90,col="red")
+  # Mean connectivity as a function of the soft-thresholding power
+  plot(sft$fitIndices[,1], sft$fitIndices[,5],
+       xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+       main = paste("Mean connectivity"))
+  text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+}
+
+##################WGCNA Analysis Pipeline: Calculate Correlation Between Expression and Connectivity Between Data Sets#####################
+if (calc_connectivity == TRUE) {
+  softPower <- 6 #choose soft-thresholding power for WGCNA analysis (determied by calculating degree of topological overlap and connectivity over range of soft-thresholding powers)
+  #see section below on calculating scale free topological overlap
+  rankRNASeq_exp= rank(rowMeans(RNASeq_dat))
+  rankCCLE_exp= rank(rowMeans(CCLE_dat))
+  
+  rankRNASeq_conn= rank(softConnectivity(t(RNASeq_dat),type="signed",power=softPower))
+  rankCCLE_conn= rank(softConnectivity(t(CCLE_dat),type="signed",power=softPower))
+  
+  pdf("Generalized Network Properties Between RNASeq and CCLE Datasets.pdf", height=10, width=9) 
+  par(mfrow=c(2,1))
+  verboseScatterplot(rankRNASeq_exp,rankCCLE_exp, xlab="Ranked Expression (RNASeq)",
+                     ylab="Ranked Expression (CCLE)")
+  verboseScatterplot(rankRNASeq_conn,rankCCLE_conn, xlab="Ranked Connectivity (RNASeq)",
+                     ylab="Ranked Connectivity (CCLE)")
+  dev.off()
+}
+
+##################WGCNA Analysis Pipeline: Perform WGCNA on CCLE and RNASeq Datasets and Create Dendrograms#####################
+#Calculate adjacency between RNASeq samples, calculate TOM dissimilarity and perform hierarchial clustering
+cache(adjacency_RNASeq <- adjacency(t(RNASeq_dat),power=softPower,type="signed",corOptions =  "method = 'pearson'"),dir=".", prefix="tmp_R_cache_WGCNA");
+diag(adjacency_RNASeq)=0
+cache(dissTOM_RNASeq <- 1-TOMsimilarity(adjacency_RNASeq, TOMDenom = 'min', verbose = 1),dir=".", prefix="tmp_R_cache_WGCNA");
+cache(geneTree_RNASeq <- hclust(as.dist(dissTOM_RNASeq), method="ward.D2"),dir=".", prefix="tmp_R_cache_WGCNA");
+
+#Calculate adjacency between CCLE samples, calculate TOM dissimilarity and perform hierarchial clustering
+cache(adjacency_CCLE <- adjacency(t(CCLE_dat),power=softPower,type="signed",corOptions =  "method = 'pearson'"),dir=".", prefix="tmp_R_cache_WGCNA");
+diag(adjacency_CCLE)=0
+cache(dissTOM_CCLE <- 1-TOMsimilarity(adjacency_CCLE, TOMDenom = 'min', verbose = 1),dir=".", prefix="tmp_R_cache_WGCNA");
+cache(geneTree_CCLE <- hclust(as.dist(dissTOM_CCLE), method="ward.D2"),dir=".", prefix="tmp_R_cache_WGCNA");
+
+#Plot dendrograms of hierarchial clustering
+pdf("Dendrogram_RNASeq_CCLE.pdf",height=6,width=16)
+par(mfrow=c(1,2))
+plot(geneTree_RNASeq,xlab="",sub="",main="Gene clustering on TOM-based dissimilarity (RNASeq)",
+     labels=FALSE,hang=0.04);
+plot(geneTree_CCLE,xlab="",sub="",main="Gene clustering on TOM-based dissimilarity (CCLE)",
+     labels=FALSE,hang=0.04);
+dev.off() 
+
+
+##################WGCNA Analysis Pipeline: Construct Gene Modules for CCLE Dataset#####################
+#Calculate CCLE Gene Modules and Plot Below Dendrogram
+mColorh=NULL
+for (ds in 0:2){
+  dynamicMods = cutreeDynamic(dendro = geneTree_CCLE, distM = dissTOM_CCLE,
+                              deepSplit = ds, pamRespectsDendro = FALSE,
+                              minClusterSize = minModuleSize);
+  #mColorh=cbind(mColorh,labels2colors(dynamicMods, colorSeq = colors_comb))
+  mColorh=cbind(mColorh,labels2colors(dynamicMods));
+}
+
+pdf("Module_choices_CCLE.pdf", height=10,width=25);
+plotDendroAndColors(geneTree_CCLE, mColorh, paste("dpSplt =",0:3), main = "CCLE Modules by Deep Split Factor",dendroLabels=FALSE);
+dev.off()
+
+cache(modules_CCLE <- mColorh[,1],dir=".", prefix="tmp_R_cache_WGCNA") #Chose ds = 0 for module construction
+
+#Perform Principle Component Analysis (PCA)
+PCs_CCLE = moduleEigengenes(t(CCLE_dat), colors=modules_CCLE)
+ME_CCLE = PCs_CCLE$eigengenes
+dist_CCLE = 1-abs(cor(ME_CCLE,use="p"))
+distPC_CCLE = ifelse(is.na(dist_CCLE), 0, dist_CCLE)
+pcTree_CCLE = hclust(as.dist(distPC_CCLE),method="a")
+MDS_CCLE = cmdscale(as.dist(distPC_CCLE),2)
+colors_CCLE = names(table(modules_CCLE))
+
+#Load CCLE Sample Clustering Data from ConsensusClusterPlus() Results
+load("tmp_R_cache_CCLE_results_seed.RData")
+#Load CCLE Sampe Clustering Dendrogram
+CCLE_tree <- CCLE_results_seed[[4]][["consensusTree"]]
+#Creat Cluster Group Labels Based on ConsensusClusterPlus() output
+CCLE_class <- CCLE_results_seed[[4]][["consensusClass"]]
+CCLE_class_color <- CCLE_class
+CCLE_class_color[which(CCLE_class_color == 1)] <- "#B2DF8A"
+CCLE_class_color[which(CCLE_class_color == 2)] <- "#33A02C"
+CCLE_class_color[which(CCLE_class_color == 3)] <- "#A6CEE3"
+CCLE_class_color[which(CCLE_class_color == 4)] <- "#1F78B4"
+
+heatmap_color <- rev(brewer.pal(9, "YlGnBu"))
+#heatmap_color <- brewer.pal(11, name = "RdYlGn")
+
+#known error in plotting of second heatmap, need to run next section of code "Construct Gene Modules for RNASeq Dataset"
+pdf("ModuleEigengeneVisualizations_CCLE.pdf",height=6,width=6)
+par(mfrow=c(1,1), mar=c(0, 3, 1, 1) + 0.1, cex=1)
+plot(pcTree_CCLE, xlab="",ylab="",main="",sub="")
+plot(MDS_CCLE, col= colors_CCLE, main="MDS plot", cex=2, pch=19)
+ordergenes = geneTree_CCLE$order
+
+##Heatmap of CCLE Cell Line Eigengenes by CCLE WGCNA Modules
+MEs_CCLE_CCLEmodules <- moduleEigengenes(t(CCLE_dat), modules_CCLE)$eigengenes
+ME_CCLE_CCLE <- MEs_CCLE_CCLEmodules
+labCol_CCLE_ME <- c("Synapse", "Extracellular Space", "Membrane Components", "Mitochondria/Translation", "Cell Cycle/Mitosis")
+heatmap_CCLE_CCLE <- heatmap.2(as.matrix(ME_CCLE_CCLE), Colv = TRUE, Rowv = as.dendrogram(CCLE_tree), dendrogram = 'both', col = heatmap_color, scale="none", margins=c(8,7),cexRow = 0.4 + 1/log10(dim(CCLE_heatmap)[1]),
+                               cexCol = 0.4 + 1/log10(dim(CCLE_heatmap)[2]),labRow = colnames(CCLE_heatmap), labCol = labCol_CCLE_ME, ColSideColors = gsub("^ME","",colnames(ME_CCLE)), RowSideColors = CCLE_class_color, xlab = "Gene Modules", ylab = "CCLE Cell Lines", key = T, keysize = 1.0,
+                               trace = "none", density.info = 'none', key.title = NA, srtCol = 20)
+
+##Heatmap of CCLE Cell Line Eigengenes by TCGA RNASeq WGCNA Modules
+MEs_CCLE_RNASeqmodules <- moduleEigengenes(t(CCLE_dat), modules_RNASeq)$eigengenes
+ME_CCLE_RNASeq <- MEs_CCLE_RNASeqmodules
+labCol_CCLE_RNASeq <- c("ECM/Vasculature", "Nuclear Membrane/ER", "Cell Cycle", "Neurohormonal", "Mitochondria/Respiration", "Transcription", "Immune Response", "Neural Signaling", "Translation")
+heatmap.2(as.matrix(ME_CCLE_RNASeq), Colv = TRUE, Rowv = as.dendrogram(CCLE_tree), dendrogram = 'both', col = heatmap_color, scale="none", margins=c(8,7),cexRow = 0.4 + 1/log10(dim(CCLE_heatmap)[1]),
+          cexCol = 0.4 + 1/log10(dim(CCLE_heatmap)[2]),labRow = colnames(CCLE_heatmap), labCol = labCol_CCLE_RNASeq, ColSideColors = gsub("^ME","",colnames(ME_CCLE_RNASeq)), RowSideColors = CCLE_class_color, xlab = "Gene Modules", ylab = "CCLE Cell Lines", key = T, keysize = 1.0,
+          trace = "none", density.info = 'none', key.title = NA, srtCol = 20)
+
+# ##Heatmap of CCLE Cell Lines Expression Data by CCLE WGCNA Modules
+#heatmap.2(as.matrix(t(CCLE_heatmap)), Colv = as.dendrogram(geneTree_CCLE), Rowv = as.dendrogram(CCLE_tree), dendrogram = 'both', col = heatmap_color, scale="none", margins=c(2,7),cexRow = 0.6 + 1/log10(dim(CCLE_heatmap)[1]),
+#           cexCol = 0.025 + 1/log10(dim(CCLE_heatmap)[2]),labRow = colnames(CCLE_heatmap), labCol = NA, ColSideColors = modules_CCLE, RowSideColors = CCLE_class_color, xlab = "Genes", ylab = "CCLE Cell Lines", key = T, keysize = 1.0,
+#           trace = "none", density.info = 'none', key.title = NA)
+
+##Heatmap of CCLE Cell Lines Expression Data by TCGA RNASeq WGCNA Modules
+heatmap.2(as.matrix(t(CCLE_heatmap)), Colv = as.dendrogram(geneTree_RNASeq), Rowv = as.dendrogram(CCLE_tree), dendrogram = 'both', col = heatmap_color, scale="none", margins=c(2,7),cexRow = 0.6 + 1/log10(dim(CCLE_heatmap)[1]),
+          cexCol = 0.025 + 1/log10(dim(CCLE_heatmap)[2]),labRow = colnames(CCLE_heatmap), labCol = NA, ColSideColors = modules_RNASeq, RowSideColors = CCLE_class_color, xlab = "Genes", main = "CCLE Data with RNASeq Modules", ylab = "CCLE Cell Lines", key = T, keysize = 1.0,
+          trace = "none", density.info = 'none', key.title = NA)
+
+for (which.module in names(table(modules_CCLE))){
+  ME = ME_CCLE[, paste("ME",which.module, sep="")]
+  barplot(ME, col=which.module, main="", cex.main=2,
+          ylab="eigengene expression",xlab="array sample")
+}
+dev.off()
+
+##################WGCNA Analysis Pipeline: Construct Gene Modules for RNASeq Dataset#####################
+#Calculate RNASeq Gene Modules and Plot Below Dendrogram
+mColorh=NULL
+for (ds in 0:2){
+  dynamicMods = cutreeDynamic(dendro = geneTree_RNASeq, distM = dissTOM_RNASeq,
+                              deepSplit = ds, pamRespectsDendro = FALSE,
+                              minClusterSize = minModuleSize);
+  #mColorh=cbind(mColorh,labels2colors(dynamicMods, colorSeq = colors_comb))
+  mColorh=cbind(mColorh,labels2colors(dynamicMods));
+}
+
+pdf("Module_choices_RNASeq.pdf", height=10,width=25);
+plotDendroAndColors(geneTree_RNASeq, mColorh, paste("dpSplt =",0:3), main = "RNASeq Modules by Deep Split Factor",dendroLabels=FALSE);
+dev.off()
+
+cache(modules_RNASeq <- mColorh[,1],dir=".", prefix="tmp_R_cache_WGCNA") #Chose ds = 0 for module construction
+
+#Perform Principle Component Analysis (PCA)
+PCs_RNASeq = moduleEigengenes(t(RNASeq_dat), colors=modules_RNASeq)
+ME_RNASeq = PCs_RNASeq$eigengenes
+dist_RNASeq = 1-abs(cor(ME_RNASeq,use="p"))
+distPC_RNASeq = ifelse(is.na(dist_RNASeq), 0, dist_RNASeq)
+pcTree_RNASeq = hclust(as.dist(distPC_RNASeq),method="a")
+MDS_RNASeq = cmdscale(as.dist(distPC_RNASeq),2)
+colors_RNASeq = names(table(modules_RNASeq))
+
+#Load CCLE Sample Clustering Data from ConsensusClusterPlus() Results
+load("tmp_R_cache_2016-03-06_RNAseq_results_seed.RData")
+#Load CCLE Sampe Clustering Dendrogram
+RNASeq_tree <- RNAseq_results_seed[[4]][["consensusTree"]]
+#Creat Cluster Group Labels Based on ConsensusClusterPlus() output
+RNASeq_class <- RNAseq_results_seed[[4]][["consensusClass"]]
+RNASeq_class_color <- RNASeq_class
+RNASeq_class_color[which(RNASeq_class_color == 1)] <- "#B2DF8A"
+RNASeq_class_color[which(RNASeq_class_color == 2)] <- "#33A02C"
+RNASeq_class_color[which(RNASeq_class_color == 3)] <- "#A6CEE3"
+RNASeq_class_color[which(RNASeq_class_color == 4)] <- "#1F78B4"
+
+pdf("ModuleEigengeneVisualizations_RNASeq.pdf",height=6,width=6)
+par(mfrow=c(1,1), mar=c(0, 3, 1, 1) + 0.1, cex=1)
+plot(pcTree_RNASeq, xlab="",ylab="",main="",sub="")
+plot(MDS_RNASeq, col= colors_RNASeq, main="MDS plot", cex=2, pch=19)
+ordergenes = geneTree_RNASeq$order
+
+##Heatmap of TCGA RNASeq Eigengenes by TCGA RNASeq WGCNA Modules
+MEs_RNASeq_RNASeqmodules <- moduleEigengenes(t(RNASeq_dat), modules_RNASeq)$eigengenes
+ME_RNASeq_RNASeq <- MEs_RNASeq_RNASeqmodules
+labCol_RNASeq_RNASeq <- c("ECM/Vasculature", "Nuclear Membrane/ER", "Cell Cycle", "Neurohormonal", "Mitochondria/Respiration", "Transcription", "Immune Response", "Neural Signaling", "Translation")
+heatmap.2(as.matrix(ME_RNASeq_RNASeq), Colv = TRUE, Rowv = as.dendrogram(RNASeq_tree), dendrogram = 'both', col = heatmap_color, scale="none", margins=c(8,7),cexRow = 0.3 + 1/log10(dim(RNASeq_heatmap)[1]),
+          cexCol = 0.4 + 1/log10(dim(RNASeq_heatmap)[2]),labRow = colnames(RNASeq_heatmap), labCol = labCol_RNASeq_RNASeq, ColSideColors = gsub("^ME","",colnames(ME_RNASeq_RNASeq)), RowSideColors = RNASeq_class_color, xlab = "Gene Modules", ylab = "TCGA RNASeq Patient Samples", key = T, keysize = 1.0,
+          trace = "none", density.info = 'none', key.title = NA, srtCol = 20)
+
+# ##Heatmap of TCGA RNASeq Expression Data by TCGA RNASeq WGCNA Modules
+# heatmap.2(as.matrix(t(RNASeq_heatmap)), Colv = as.dendrogram(geneTree_RNASeq), Rowv = as.dendrogram(RNASeq_tree), dendrogram = 'both', col = heatmap_color, scale="none", margins=c(2,7),cexRow = 0.4 + 1/log10(dim(RNASeq_heatmap)[1]),
+#           cexCol = 0.025 + 1/log10(dim(RNASeq_heatmap)[2]),labRow = colnames(RNASeq_heatmap), labCol = NA, ColSideColors = modules_RNASeq, RowSideColors = RNASeq_class_color, xlab = "Genes", ylab = "Nature George et al SCLC Tumor 
+#           Samples", key = T, keysize = 1.25,
+#           trace = "none", density.info = 'none', key.title = NA)
+
+for (which.module in names(table(modules_RNASeq))){
+  ME = ME_RNASeq[, paste("ME",which.module, sep="")]
+  barplot(ME, col=which.module, main="", cex.main=2,
+          ylab="eigengene expression",xlab="array sample")
+};
+dev.off();
+
+##################WGCNA Analysis Pipeline: Calculate Network Preservation at the Module Level Between CCLE and RNASeq Datasets#####################
+#Qualitatively measure network preservation at the module level by mapping RNASeq modules onto CCLE classification
+pdf("Final_modules_RNASeq on CCLE.pdf",height=8,width=12)
+plotDendroAndColors(geneTree_RNASeq, modules_RNASeq, "RNASeq Modules", dendroLabels=FALSE, hang=0.03, addGuide=TRUE,
+                    guideHang=0.05, main="Gene dendrogram and module colors (RNASeq)")
+plotDendroAndColors(geneTree_CCLE, modules_RNASeq, "RNASeq Modules", dendroLabels=FALSE, hang=0.03, addGuide=TRUE,
+                    guideHang=0.05, main="Gene dendrogram and module colors (CCLE)")
+dev.off() 
+
+#Calculate module preservation quantitatively
+multiExpr = list(A1=list(data=t(RNASeq_dat)),A2=list(data=t(CCLE_dat)))
+multiColor = list(A1 = modules_RNASeq)
+cache(mp <- modulePreservation(multiExpr,multiColor,referenceNetworks=1,verbose=3,networkType="signed",
+                               nPermutations=30,maxGoldModuleSize=350,maxModuleSize=1500),dir=".", prefix="tmp_R_cache_WGCNA_")
+stats = mp$preservation$Z$ref.A1$inColumnsAlsoPresentIn.A2
+stats[order(-stats[,2]),c(1:2)]
+
+##################WGCNA Analysis Pipeline: GO Annotation of CCLE Modules#####################
+#Read in the probe annotation
+work_dir <- getwd() #get working directory
+file_path_annot <- file.path(work_dir, "homo_sapiens_gene_info.txt")#create file path
+annot = read.delim(file_path_annot, header = T, sep = "\t");
+#Match probes in the data set to the probe IDs in the annotation file
+probes = names(as.data.frame(t(CCLE_dat)))
+probes2annot = match(probes, annot$Symbol)
+#Get the corresponding Locuis Link IDs
+allLLIDs = annot$GeneID[probes2annot];
+
+cache(GOenr_CCLE <- GOenrichmentAnalysis(modules_CCLE, allLLIDs, organism = "human", nBestP = 10), dir=".", prefix=paste("tmp_R_cache_WGCNA_"))
+tab_CCLE = GOenr_CCLE$bestPTerms[[4]]$enrichment
+
+##################WGCNA Analysis Pipeline: GO Annotation of TCGA RNASeq Modules#####################
+#Read in the probe annotation
+work_dir <- getwd() #get working directory
+file_path_annot <- file.path(work_dir, "homo_sapiens_gene_info.txt")#create file path
+annot = read.delim(file_path_annot, header = T, sep = "\t");
+#Match probes in the data set to the probe IDs in the annotation file
+probes = names(as.data.frame(t(RNASeq_dat)))
+probes2annot = match(probes, annot$Symbol)
+#Get the corresponding Locuis Link IDs
+allLLIDs = annot$GeneID[probes2annot];
+
+cache(GOenr_RNASeq <- GOenrichmentAnalysis(modules_RNASeq, allLLIDs, organism = "human", nBestP = 10), dir=".", prefix=paste("tmp_R_cache_WGCNA_"))
+tab_RNASeq = GOenr_RNASeq$bestPTerms[[4]]$enrichment
+
+##################WGCNA Analysis Pipeline: Eigengene barplot by Module across CCLE Cell Lines#####################
+##Plot Eigengenes across modules
+MEs_CCLE_RNASeqmodules_data <- moduleEigengenes(t(CCLE_dat), modules_RNASeq)$eigengenes
+labCol_RNASeq_RNASeq <- c("ECM/Vasculature", "Nuclear Membrane/ER", "Cell Cycle", "Neurohormonal", "Mitochondria/Respiration", "Transcription", "Immune Response", "Neural Signaling", "Translation")
+colnames(MEs_CCLE_RNASeqmodules_data) <- labCol_RNASeq_RNASeq
+#Correlate MEs, specifically correlated with Neural Signaling Module
+correlation_ME <- cor(MEs_CCLE_RNASeqmodules_data)
+correlation_NeuralSignaling <- correlation_ME[order(-correlation_ME["Neural Signaling",]),1] #correlate with neural signaling module
+#rearrange data for plotting
+column_order_ME_CCLE <- names(correlation_NeuralSignaling)
+MEs_CCLE_RNASeqmodules_data <- MEs_CCLE_RNASeqmodules_data[, column_order_ME_CCLE]
+MEs_CCLE_RNASeqmodules_data$CCLE <- colnames(CCLE_dat)
+
+
+##Convert Eigenvalue Matrix into Dataframe that can be plotted with ggplot
+CCLE_ME_df <- melt(MEs_CCLE_RNASeqmodules_data,id.vars=c("CCLE"))
+CCLE_ME_df$value =as.numeric(CCLE_ME_df$value)
+CCLE_ME_df$CCLE <- factor(CCLE_ME_df$CCLE, levels = CCLE_ME_df$CCLE[order(MEs_CCLE_RNASeqmodules_data$`Neural Signaling`)])
+
+#heatmap
+write.csv(CCLE_ME_df, file="Eigengene.csv")
+a = read.csv("eigengene_1.csv")
+row.names(a) <- a$sample
+a <- a[, -1]
+x <- data.matrix(a)
+x
+rc <- rainbow(nrow(x), start = 0, end = 0.2)
+cc <- rainbow(ncol(x), start = 0, end = 0.2)
+hv <- heatmap(x, Rowv = F, Colv = F, col = heat.colors(256), scale = "none", margins = c(10,20))
+hv
+levelplot(x, col.regions=heat.colors)
+
+##Plot with ggplot
+ggplot(CCLE_ME_df,aes(CCLE,value, fill = variable)) +
+  geom_bar(position = "dodge", stat="identity") +
+  coord_flip() + facet_wrap(~variable,nrow=3) + theme_cowplot() +
+  scale_fill_manual(values = c("turquoise", "pink", "brown", "green", "magenta", "yellow", "black", "red", "blue")) +
+  theme(axis.title.y=element_blank(), axis.text.y=element_blank(), axis.ticks.y=element_blank(), legend.position = "none") 
+
+
+
+
+##################WGCNA Analysis Pipeline: Eigengene barplot by Module across TCGA Patient Samples#####################
+##Plot Eigengenes across modules
+MEs_RNASeq_RNASeqmodules_data <- moduleEigengenes(t(RNASeq_dat), modules_RNASeq)$eigengenes
+labCol_RNASeq_RNASeq <- c("ECM/Vasculature", "Nuclear Membrane/ER", "Cell Cycle", "Neurohormonal", "Mitochondria/Respiration", "Transcription", "Immune Response", "Neural Signaling", "Translation")
+colnames(MEs_RNASeq_RNASeqmodules_data) <- labCol_RNASeq_RNASeq
+#Correlate MEs, specifically correlated with Neural Signaling Module
+correlation_ME <- cor(MEs_RNASeq_RNASeqmodules_data)
+correlation_NeuralSignaling <- correlation_ME[order(-correlation_ME["Neural Signaling",]),1] #correlate with neural signaling module
+#rearrange data for plotting
+column_order_ME_RNASeq <- names(correlation_NeuralSignaling)
+MEs_RNASeq_RNASeqmodules_data <- MEs_RNASeq_RNASeqmodules_data[, column_order_ME_RNASeq]
+MEs_RNASeq_RNASeqmodules_data$RNASeq <- colnames(RNASeq_dat)
+
+##Convert Eigenvalue Matrix into Dataframe that can be plotted with ggplot
+RNASeq_ME_df <- melt(MEs_RNASeq_RNASeqmodules_data,id.vars=c("RNASeq"))
+RNASeq_ME_df$value =as.numeric(RNASeq_ME_df$value)
+RNASeq_ME_df$RNASeq <- factor(RNASeq_ME_df$RNASeq, levels = RNASeq_ME_df$RNASeq[order(MEs_RNASeq_RNASeqmodules_data$`Neural Signaling`)])
+
+##Plot with ggplot
+ggplot(RNASeq_ME_df,aes(RNASeq,value, fill = variable)) +
+  geom_bar(position = "dodge", stat="identity") +
+  coord_flip() + facet_wrap(~variable,nrow=3) + theme_cowplot() +
+  scale_fill_manual(values = c("turquoise", "green", "pink", "brown", "magenta", "black", "blue", "yellow", "red")) +
+  theme(axis.title.y=element_blank(), axis.text.y=element_blank(), axis.ticks.y=element_blank(), legend.position = "none")
+
+
+##################WGCNA Analysis Pipeline: Eigengene boxplot by CCLE Consensus Cluster Group#####################
+##Plot Eigengenes across modules
+MEs_CCLE_RNASeqmodules_data2 <- moduleEigengenes(t(CCLE_dat), modules_RNASeq)$eigengenes
+labCol_RNASeq_RNASeq <- c("ECM/Vasculature", "Nuclear Membrane/ER", "Cell Cycle", "Neurohormonal", "Mitochondria/Respiration", "Transcription", "Immune Response", "Neural Signaling", "Translation")
+colnames(MEs_CCLE_RNASeqmodules_data2) <- labCol_RNASeq_RNASeq
+#Correlate MEs, specifically correlated with Neural Signaling Module
+correlation_ME <- cor(MEs_CCLE_RNASeqmodules_data2)
+correlation_NeuralSignaling <- correlation_ME[order(-correlation_ME["Neural Signaling",]),1] #correlate with neural signaling module
+#rearrange data for plotting
+column_order_ME_CCLE <- names(correlation_NeuralSignaling)
+MEs_CCLE_RNASeqmodules_data2 <- MEs_CCLE_RNASeqmodules_data2[, column_order_ME_CCLE]
+MEs_CCLE_RNASeqmodules_data2$CCLE <- colnames(CCLE_dat)
+MEs_CCLE_RNASeqmodules_data2$Clusters <- CCLE_cluster_4
+
+##Convert Eigenvalue Matrix into Dataframe that can be plotted with ggplot
+CCLE_ME_df2 <- melt(MEs_CCLE_RNASeqmodules_data2,id.vars=c("CCLE","Clusters"))
+CCLE_ME_df2$value =as.numeric(CCLE_ME_df2$value)
+
+##Plot with ggplot
+ggplot(CCLE_ME_df2, aes(x=Clusters, y= value, group = Clusters)) + facet_wrap(~variable) +
+  geom_boxplot(fill = rep(c("#B2DF8A", "#33A02C", "#A6CEE3", "#1F78B4"),9)) +
+  theme_cowplot() +
+  stat_boxplot(geom = 'errorbar', width = 0.5)  + ylab("Eigengene Value")  + ylim(-0.5, 0.5)
+
+##Significance testing of eigengenes among cluster groups, using pair-wise Mann-Whitney-Wilcoxon test for Cluster 4 vs Cluster 1, then Cluster 2, then Cluster 3
+##Subset data into cluster groups
+CCLE_cluster_4_ME <- MEs_CCLE_RNASeqmodules_data2[MEs_CCLE_RNASeqmodules_data2$Clusters == 4,]
+CCLE_cluster_3_ME <- MEs_CCLE_RNASeqmodules_data2[MEs_CCLE_RNASeqmodules_data2$Clusters == 3,]
+CCLE_cluster_2_ME <- MEs_CCLE_RNASeqmodules_data2[MEs_CCLE_RNASeqmodules_data2$Clusters == 2,]
+CCLE_cluster_1_ME <- MEs_CCLE_RNASeqmodules_data2[MEs_CCLE_RNASeqmodules_data2$Clusters == 1,]
+
+##Create dataframe with Cluster 4 and Cluster 1
+CCLE_cluster_4v1 <- rbind(CCLE_cluster_4_ME,CCLE_cluster_1_ME)
+##Mann-Whitney-Wilcoxon Significance Testing
+neural_signaling_4v1 <- wilcox.test(`Neural Signaling` ~ Clusters, data = CCLE_cluster_4v1)
+transcription_4v1 <- wilcox.test(`Transcription` ~ Clusters, data = CCLE_cluster_4v1)
+cell_cycle_4v1 <- wilcox.test(`Cell Cycle` ~ Clusters, data = CCLE_cluster_4v1)
+neurohormonal_4v1 <- wilcox.test(`Neurohormonal` ~ Clusters, data = CCLE_cluster_4v1)
+mitochondria_resp_4v1 <- wilcox.test(`Mitochondria/Respiration` ~ Clusters, data = CCLE_cluster_4v1)
+translation_4v1 <- wilcox.test(`Translation` ~ Clusters, data = CCLE_cluster_4v1)
+ecm_vasc_4v1 <- wilcox.test(`ECM/Vasculature` ~ Clusters, data = CCLE_cluster_4v1)
+immune_4v1 <- wilcox.test(`Immune Response` ~ Clusters, data = CCLE_cluster_4v1)
+NM_ER_4v1 <- wilcox.test(`Nuclear Membrane/ER` ~ Clusters, data = CCLE_cluster_4v1)
+##Obtain Pvalues for Mann-Whitney-Wilcoxon Significance Testing
+CCLE_pvalues_4v1 <- c(neural_signaling_4v1$p.value, transcription_4v1$p.value, cell_cycle_4v1$p.value,
+                      neurohormonal_4v1$p.value, mitochondria_resp_4v1$p.value, translation_4v1$p.value,
+                      ecm_vasc_4v1$p.value, immune_4v1$p.value, NM_ER_4v1$p.value)
+
+##Create dataframe with Cluster 4 and Cluster 2
+CCLE_cluster_4v2 <- rbind(CCLE_cluster_4_ME,CCLE_cluster_2_ME)
+##Mann-Whitney-Wilcoxon Significance Testing
+neural_signaling_4v2 <- wilcox.test(`Neural Signaling` ~ Clusters, data = CCLE_cluster_4v2)
+transcription_4v2 <- wilcox.test(`Transcription` ~ Clusters, data = CCLE_cluster_4v2)
+cell_cycle_4v2 <- wilcox.test(`Cell Cycle` ~ Clusters, data = CCLE_cluster_4v2)
+neurohormonal_4v2 <- wilcox.test(`Neurohormonal` ~ Clusters, data = CCLE_cluster_4v2)
+mitochondria_resp_4v2 <- wilcox.test(`Mitochondria/Respiration` ~ Clusters, data = CCLE_cluster_4v2)
+translation_4v2 <- wilcox.test(`Translation` ~ Clusters, data = CCLE_cluster_4v2)
+ecm_vasc_4v2 <- wilcox.test(`ECM/Vasculature` ~ Clusters, data = CCLE_cluster_4v2)
+immune_4v2 <- wilcox.test(`Immune Response` ~ Clusters, data = CCLE_cluster_4v2)
+NM_ER_4v2 <- wilcox.test(`Nuclear Membrane/ER` ~ Clusters, data = CCLE_cluster_4v2)
+##Obtain Pvalues for Mann-Whitney-Wilcoxon Significance Testing
+CCLE_pvalues_4v2 <- c(neural_signaling_4v2$p.value, transcription_4v2$p.value, cell_cycle_4v2$p.value,
+                      neurohormonal_4v2$p.value, mitochondria_resp_4v2$p.value, translation_4v2$p.value,
+                      ecm_vasc_4v2$p.value, immune_4v2$p.value, NM_ER_4v2$p.value)
+
+##Create dataframe with Cluster 4 and Cluster 3
+CCLE_cluster_4v3 <- rbind(CCLE_cluster_4_ME,CCLE_cluster_3_ME)
+##Mann-Whitney-Wilcoxon Significance Testing
+neural_signaling_4v3 <- wilcox.test(`Neural Signaling` ~ Clusters, data = CCLE_cluster_4v3)
+transcription_4v3 <- wilcox.test(`Transcription` ~ Clusters, data = CCLE_cluster_4v3)
+cell_cycle_4v3 <- wilcox.test(`Cell Cycle` ~ Clusters, data = CCLE_cluster_4v3)
+neurohormonal_4v3 <- wilcox.test(`Neurohormonal` ~ Clusters, data = CCLE_cluster_4v3)
+mitochondria_resp_4v3 <- wilcox.test(`Mitochondria/Respiration` ~ Clusters, data = CCLE_cluster_4v3)
+translation_4v3 <- wilcox.test(`Translation` ~ Clusters, data = CCLE_cluster_4v3)
+ecm_vasc_4v3 <- wilcox.test(`ECM/Vasculature` ~ Clusters, data = CCLE_cluster_4v3)
+immune_4v3 <- wilcox.test(`Immune Response` ~ Clusters, data = CCLE_cluster_4v3)
+NM_ER_4v3 <- wilcox.test(`Nuclear Membrane/ER` ~ Clusters, data = CCLE_cluster_4v3)
+##Obtain Pvalues for Mann-Whitney-Wilcoxon Significance Testing
+CCLE_pvalues_4v3 <- c(neural_signaling_4v3$p.value, transcription_4v3$p.value, cell_cycle_4v3$p.value,
+                      neurohormonal_4v3$p.value, mitochondria_resp_4v3$p.value, translation_4v3$p.value,
+                      ecm_vasc_4v3$p.value, immune_4v3$p.value, NM_ER_4v3$p.value)
+
+##Create table of significant testing of Cluster 4 versus other groups
+row_names_sig_test <- c("4v1", "4v2", "4v3")
+col_names_sig_test <- c("Neural Signaling", "Transcription", "Cell Cycle", "Neurohormonal",
+                        "Mitochondrial/Respiration", "Translation", "ECM/Vasculature", "Immune Response", "Nuclear Membrane/ER")
+CCLE_Sig_table_4vRest <- rbind(CCLE_pvalues_4v1, CCLE_pvalues_4v2, CCLE_pvalues_4v3)
+colnames(CCLE_Sig_table_4vRest) <- col_names_sig_test
+write.table(CCLE_Sig_table_4vRest, "CCLE_Eigengenes_by_cluster_4vRest.txt", sep = "\t")
+
+##################WGCNA Analysis Pipeline: Eigengene boxplot by TCGA Patient Sample Consensus Cluster Group#####################
+##Plot Eigengenes across modules
+MEs_RNASeq_RNASeqmodules_data2 <- moduleEigengenes(t(RNASeq_dat), modules_RNASeq)$eigengenes
+labCol_RNASeq_RNASeq <- c("ECM/Vasculature", "Nuclear Membrane/ER", "Cell Cycle", "Neurohormonal", "Mitochondria/Respiration", "Transcription", "Immune Response", "Neural Signaling", "Translation")
+colnames(MEs_RNASeq_RNASeqmodules_data2) <- labCol_RNASeq_RNASeq
+#Correlate MEs, specifically correlated with Neural Signaling Module
+correlation_ME <- cor(MEs_RNASeq_RNASeqmodules_data2)
+correlation_NeuralSignaling <- correlation_ME[order(-correlation_ME["Neural Signaling",]),1] #correlate with neural signaling module
+#rearrange data for plotting
+column_order_ME_RNASeq <- names(correlation_NeuralSignaling)
+MEs_RNASeq_RNASeqmodules_data2 <- MEs_RNASeq_RNASeqmodules_data2[, column_order_ME_RNASeq]
+MEs_RNASeq_RNASeqmodules_data2$RNASeq <- colnames(RNASeq_dat)
+MEs_RNASeq_RNASeqmodules_data2$Clusters <- RNAseq_cluster_4
+
+##Convert Eigenvalue Matrix into Dataframe that can be plotted with ggplot
+RNASeq_ME_df2 <- melt(MEs_RNASeq_RNASeqmodules_data2,id.vars=c("RNASeq","Clusters"))
+RNASeq_ME_df2$value = as.numeric(RNASeq_ME_df2$value)
+RNASeq_ME_df2$Clusters <- factor(RNASeq_ME_df2$Clusters, c(2,4,1,3))
+
+##Plot with ggplot
+ggplot(RNASeq_ME_df2, aes(x=Clusters, y= value, group = Clusters)) + facet_wrap(~variable) +
+  geom_boxplot(fill = rep(c("#B2DF8A", "#33A02C", "#A6CEE3", "#1F78B4"),9)) +
+  theme_cowplot() +
+  stat_boxplot(geom = 'errorbar', width = 0.5)  + ylab("Eigengene Value") + ylim(-0.5, 0.5) + xlab("TCGA Clusters")
+
+##Significance testing of eigengenes among cluster groups, using pair-wise Mann-Whitney-Wilcoxon test for Cluster 4 vs Cluster 1, then Cluster 2, then Cluster 3
+##Subset data into cluster groups, name the clusters by their correspondance to CCLE data
+RNASeq_cluster_2_ME <- MEs_RNASeq_RNASeqmodules_data2[MEs_RNASeq_RNASeqmodules_data2$Clusters == 4,]
+RNASeq_cluster_4_ME <- MEs_RNASeq_RNASeqmodules_data2[MEs_RNASeq_RNASeqmodules_data2$Clusters == 3,]
+RNASeq_cluster_1_ME <- MEs_RNASeq_RNASeqmodules_data2[MEs_RNASeq_RNASeqmodules_data2$Clusters == 2,]
+RNASeq_cluster_3_ME <- MEs_RNASeq_RNASeqmodules_data2[MEs_RNASeq_RNASeqmodules_data2$Clusters == 1,]
+
+##Create dataframe with Cluster 4 and Cluster 1
+RNASeq_cluster_4v1 <- rbind(RNASeq_cluster_4_ME,RNASeq_cluster_1_ME)
+##Mann-Whitney-Wilcoxon Significance Testing
+neural_signaling_4v1 <- wilcox.test(`Neural Signaling` ~ Clusters, data = RNASeq_cluster_4v1)
+transcription_4v1 <- wilcox.test(`Transcription` ~ Clusters, data = RNASeq_cluster_4v1)
+cell_cycle_4v1 <- wilcox.test(`Cell Cycle` ~ Clusters, data = RNASeq_cluster_4v1)
+neurohormonal_4v1 <- wilcox.test(`Neurohormonal` ~ Clusters, data = RNASeq_cluster_4v1)
+mitochondria_resp_4v1 <- wilcox.test(`Mitochondria/Respiration` ~ Clusters, data = RNASeq_cluster_4v1)
+translation_4v1 <- wilcox.test(`Translation` ~ Clusters, data = RNASeq_cluster_4v1)
+ecm_vasc_4v1 <- wilcox.test(`ECM/Vasculature` ~ Clusters, data = RNASeq_cluster_4v1)
+immune_4v1 <- wilcox.test(`Immune Response` ~ Clusters, data = RNASeq_cluster_4v1)
+NM_ER_4v1 <- wilcox.test(`Nuclear Membrane/ER` ~ Clusters, data = RNASeq_cluster_4v1)
+##Obtain Pvalues for Mann-Whitney-Wilcoxon Significance Testing
+RNASeq_pvalues_4v1 <- c(neural_signaling_4v1$p.value, transcription_4v1$p.value, cell_cycle_4v1$p.value,
+                        neurohormonal_4v1$p.value, mitochondria_resp_4v1$p.value, translation_4v1$p.value,
+                        ecm_vasc_4v1$p.value, immune_4v1$p.value, NM_ER_4v1$p.value)
+
+##Create dataframe with Cluster 4 and Cluster 2
+RNASeq_cluster_4v2 <- rbind(RNASeq_cluster_4_ME,RNASeq_cluster_2_ME)
+##Mann-Whitney-Wilcoxon Significance Testing
+neural_signaling_4v2 <- wilcox.test(`Neural Signaling` ~ Clusters, data = RNASeq_cluster_4v2)
+transcription_4v2 <- wilcox.test(`Transcription` ~ Clusters, data = RNASeq_cluster_4v2)
+cell_cycle_4v2 <- wilcox.test(`Cell Cycle` ~ Clusters, data = RNASeq_cluster_4v2)
+neurohormonal_4v2 <- wilcox.test(`Neurohormonal` ~ Clusters, data = RNASeq_cluster_4v2)
+mitochondria_resp_4v2 <- wilcox.test(`Mitochondria/Respiration` ~ Clusters, data = RNASeq_cluster_4v2)
+translation_4v2 <- wilcox.test(`Translation` ~ Clusters, data = RNASeq_cluster_4v2)
+ecm_vasc_4v2 <- wilcox.test(`ECM/Vasculature` ~ Clusters, data = RNASeq_cluster_4v2)
+immune_4v2 <- wilcox.test(`Immune Response` ~ Clusters, data = RNASeq_cluster_4v2)
+NM_ER_4v2 <- wilcox.test(`Nuclear Membrane/ER` ~ Clusters, data = RNASeq_cluster_4v2)
+##Obtain Pvalues for Mann-Whitney-Wilcoxon Significance Testing
+RNASeq_pvalues_4v2 <- c(neural_signaling_4v2$p.value, transcription_4v2$p.value, cell_cycle_4v2$p.value,
+                        neurohormonal_4v2$p.value, mitochondria_resp_4v2$p.value, translation_4v2$p.value,
+                        ecm_vasc_4v2$p.value, immune_4v2$p.value, NM_ER_4v2$p.value)
+
+##Create dataframe with Cluster 4 and Cluster 3
+RNASeq_cluster_4v3 <- rbind(RNASeq_cluster_4_ME,RNASeq_cluster_3_ME)
+##Mann-Whitney-Wilcoxon Significance Testing
+neural_signaling_4v3 <- wilcox.test(`Neural Signaling` ~ Clusters, data = RNASeq_cluster_4v3)
+transcription_4v3 <- wilcox.test(`Transcription` ~ Clusters, data = RNASeq_cluster_4v3)
+cell_cycle_4v3 <- wilcox.test(`Cell Cycle` ~ Clusters, data = RNASeq_cluster_4v3)
+neurohormonal_4v3 <- wilcox.test(`Neurohormonal` ~ Clusters, data = RNASeq_cluster_4v3)
+mitochondria_resp_4v3 <- wilcox.test(`Mitochondria/Respiration` ~ Clusters, data = RNASeq_cluster_4v3)
+translation_4v3 <- wilcox.test(`Translation` ~ Clusters, data = RNASeq_cluster_4v3)
+ecm_vasc_4v3 <- wilcox.test(`ECM/Vasculature` ~ Clusters, data = RNASeq_cluster_4v3)
+immune_4v3 <- wilcox.test(`Immune Response` ~ Clusters, data = RNASeq_cluster_4v3)
+NM_ER_4v3 <- wilcox.test(`Nuclear Membrane/ER` ~ Clusters, data = RNASeq_cluster_4v3)
+##Obtain Pvalues for Mann-Whitney-Wilcoxon Significance Testing
+RNASeq_pvalues_4v3 <- c(neural_signaling_4v3$p.value, transcription_4v3$p.value, cell_cycle_4v3$p.value,
+                        neurohormonal_4v3$p.value, mitochondria_resp_4v3$p.value, translation_4v3$p.value,
+                        ecm_vasc_4v3$p.value, immune_4v3$p.value, NM_ER_4v3$p.value)
+
+##Create table of significant testing of Cluster 4 versus other groups
+row_names_sig_test <- c("4v1", "4v2", "4v3")
+col_names_sig_test <- c("Neural Signaling", "Transcription", "Cell Cycle", "Neurohormonal",
+                        "Mitochondrial/Respiration", "Translation", "ECM/Vasculature", "Immune Response", "Nuclear Membrane/ER")
+RNASeq_Sig_table_4vRest <- rbind(RNASeq_pvalues_4v1, RNASeq_pvalues_4v2, RNASeq_pvalues_4v3)
+colnames(RNASeq_Sig_table_4vRest) <- col_names_sig_test
+write.table(RNASeq_Sig_table_4vRest, "RNASeq_Eigengenes_by_cluster_4vRest.txt", sep = "\t")
+
+##################WGCNA Analysis Pipeline: Boxplot of CCLE Data eigengene values for RNASeq modules by Morphology of CCLE Cell Lines#####################
+ME_CCLE_morph <- moduleEigengenes(t(CCLE_dat), modules_RNASeq)$eigengenes
+ME_CCLE_morph_colors <- colnames(ME_CCLE_morph)
+labCol_RNASeq_RNASeq <- c("ECM/Vasculature", "Nuclear Membrane/ER", "Cell Cycle", "Neurohormonal", "Mitochondria/Respiration", "Transcription", "Immune Response", "Neural Signaling", "Translation")
+colnames(ME_CCLE_morph) <- labCol_RNASeq_RNASeq
+rownames(ME_CCLE_morph) <- colnames(CCLE_dat)
+#Correlate MEs, specifically correlated with Neural Signaling Module
+correlation_ME <- cor(ME_CCLE_morph)
+correlation_NeuralSignaling <- correlation_ME[order(-correlation_ME["Neural Signaling",]),1] #correlate with neural signaling module
+column_order_ME_CCLE <- names(correlation_NeuralSignaling)
+ME_CCLE_morph <- ME_CCLE_morph[,column_order_ME_CCLE]
+morphology_df <- read.delim("SCLC_morphology_annotation.txt", na.strings="")
+category <- morphology_df[match(rownames(ME_CCLE_morph),morphology_df$Cell.Line), "Category"]
+data_eigen_morphology <- cbind(category, ME_CCLE_morph)
+
+data_ME <- melt(data_eigen_morphology, id = 'category')
+data_ME <- data_ME[which(!is.na(data_ME$category)),]
+#Plot Module Eigengenes by CCLE SCLC Cell Line Morphology
+ggplot(data_ME, aes(x=category, y=value)) + geom_boxplot(fill = rep(c("black", "grey", "white"),9)) + 
+  ylim(-0.5,0.5) + ggtitle("Eigengene Values by CCLE SCLC Cell Line Morphology") + labs(x="Cell Morphology",y="Eigengene Values") +
+  scale_x_discrete(labels=c("Adherent", "Mixed", "Suspension")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + facet_wrap(~variable) + stat_boxplot(geom = 'errorbar', width = 0.5)
+
+##Alternative visualization of Module Eigengenes by CCLE SCLC Cell Line Morphology
+# data_bp <- melt(data_eigen_morphology, id = 'category')
+# data_bp <- data_bp[which(!is.na(data_bp$category)),]
+# data_bp.cor <- ddply(.data=data_bp,.(category),summarize,n=paste("n =", length(category)/length(ME_CCLE_morph)))
+# ggplot(data_bp) + geom_boxplot(aes(x=variable, y=value), fill = rep(gsub("^ME","",ME_CCLE_morph_colors),3)) + geom_text(data=data_bp.cor, aes(x=8, y=0.35, label=n), colour="black", inherit.aes=FALSE, parse=FALSE) + 
+#   ylim(-0.5,0.5) + ggtitle("Eigengene Values by CCLE SCLC Cell Line Morphology") + labs(x="Cell Morphology",y="Eigengene Values") +
+#   scale_x_discrete(labels=c("Mesenchymal", "Nucleus/ER", "Cell Cycle", "Neurotransmitters", "Cellular Respiration", "Transcription", "Immune Response", "Neural Development", "Translation")) +
+#   theme(axis.text.x = element_text(angle = 90, hjust = 1)) + facet_grid(~category)
+
+##Barplot of Mixed, Adherent, Suspion by Clusters
+morphology_dat <- read.delim("SCLC_morphology_annotation.txt", header = T, sep = "\t")
+morphology_dat <- morphology_dat[,c("Category", "Cluster")]
+blank_ind <- which(morphology_dat$Category == "")
+morphology_dat <- morphology_dat[-blank_ind,]
+morphology_melt <- melt(morphology_dat, id.vars=c("Category"))
+ggplot(data = morphology_melt, aes(x=value, fill=Category)) + geom_bar() + scale_fill_manual( values = c("black","darkgrey","lightgrey")) +
+  ggtitle("CCLE SCLC Cell Line Morphology by Cluster Group") + labs(x="Cluster Group", y="Number of Cell Lines") + theme_cowplot()
+
+##################WGCNA Analysis Pipeline: RNASeq Module Eigengene ssGSEA with CCLE Data#####################
+#Description: Perform ssGSEA with function 'gsva' and identify gene sets that are differentially expressed between 2 gene modules
+#Set parameters:
+gene_set <- "c2.all.v5.1.symbols.gmt" #gene_set to evaluate with GSVA
+min.sz = 1
+max.sz = Inf
+mx.diff = FALSE
+gsc <- getGmt(gene_set)
+
+#First set names of Module A and Module B to be compared (note: Moduble B versus Module A is the comparison)
+ModuleA <- "MEblack"
+ModuleB <- "MEturquoise"
+#Calculate ssGSEA Enrichment Scores
+gsc <- getGmt(gene_set)
+cache(WGCNA_es <-gsva(use_data_matrix_CCLE, gsc, min.sz = 1, max.sz = Inf, mx.diff = FALSE, method = "ssgsea"), dir=".", prefix="tmp_R_cache_");
+#Import MEs from 'Construct Gene Modules' Step
+MEs = moduleEigengenes(t(CCLE_dat), modules_RNASeq)$eigengenes
+GSEA_MEs <- MEs
+rownames(GSEA_MEs) <- rownames(t(CCLE_dat))
+#Assigne Cell Lines to Module A or Module B based on values of module eigengenes for each cell line
+indA <- which(colnames(GSEA_MEs) == ModuleA)
+indB <- which(colnames(GSEA_MEs) == ModuleB)
+x <- GSEA_MEs[[indB]][order(GSEA_MEs[[indB]])] #categories defined by ascending order of cell line eigengenes for Module B
+y <- GSEA_MEs[[indA]][order(GSEA_MEs[[indB]])]
+dat_plot <- rbind(x, y)
+barplot(dat_plot, beside = TRUE, col = c("turquoise", "black"), legend = c("Neural Signaling", "ECM/Vasculatre"), 
+        main = "Anticorrelation of Neural Signaling and ECM/Vasculature Gene Modules Across CCLE Cell Lines", ylab = "Eigenegene Values", 
+        xlab = "Rank Order of Cell Lines by Neural Signaling Eigengene Values", ylim = c(-0.4,0.4))
+neg <- sum(x < 0)
+pos <- sum(x >= 0)
+factor_compare_BtoA <- c(rep("A",neg), rep("B",pos)) #"A" factor indicates cell lines that are classified as more ModuleA, whereas "B" factor indicates cell lines thar are classified as more ModuleB
+#Perform Differential Analysis of Gene Set Enrichment Scores for Module B versus Module A
+design_1 <- model.matrix(~0+factor(factor_compare_BtoA))
+colnames(design_1) <- c("A","B")
+fit_1 <- lmFit(WGCNA_es[,order(GSEA_MEs[[indB]])],design_1)
+contrast_matrix_1 <- makeContrasts("B-A", levels = design_1)
+fit_1 <- contrasts.fit(fit_1, contrast_matrix_1)
+fit_1 <- eBayes(fit_1)
+allGeneSets_1 <- topTable(fit_1, number = Inf)
+DEgeneSets_1 <- topTable(fit_1,number = Inf, p.value = adjPvalueCutoff, adjust = "BH")
+res_1 <- decideTests(fit_1, p.value = adjPvalueCutoff)
+summary(res_1) #display results of significance testing
+#Find Differential GeneSets in top and bottom quartiles relative to fold change in enrichment score between Module B and Module A
+quant_DEgeneSets <- as.matrix(quantile(DEgeneSets_1$logFC))
+low_thresh <- quant_DEgeneSets[rownames(quant_DEgeneSets) == "25%"]
+high_thresh <- quant_DEgeneSets[rownames(quant_DEgeneSets) == "75%"]
+DEgeneSets_logFC <- DEgeneSets_1[(DEgeneSets_1$logFC < low_thresh) | (DEgeneSets_1$logFC > high_thresh),]
+#Find Top 50 and Bottom 50 Gene Sets according to fold change in enrichment score between Module B and Module A
+DEgeneSets_orderlogFC <- DEgeneSets_1[order(DEgeneSets_1$logFC),]
+DEgeneSets_top100logFC_matrix <- rbind(head(DEgeneSets_orderlogFC,50), tail(DEgeneSets_orderlogFC,50))
+
+##Plot Differential Gene Set Enrichment Results
+##set brewer.pal heatmap colors
+heatmap_color <- rev(brewer.pal(9, "YlGnBu"))
+
+#Set which gene set enrichment matrix to plot
+gene_set_matrix <- DEgeneSets_top100logFC_matrix
+#Order WGCNA_es data matrix by Module B eigengenes and subset out gene sets that are differentially enriched
+heat_mat_sort <- WGCNA_es[,order(GSEA_MEs[[indB]])][rownames(WGCNA_es) %in% rownames(gene_set_matrix),]
+module_not <- factor_compare_BtoA
+#Create Labels for Cell Lines Assigned to Module A or Module B
+num_label_1 <- sum(factor_compare_BtoA == "A")
+num_label_2 <- sum(factor_compare_BtoA == "B")
+#Plot Heatmap of Enrichment Scores for Top 100 Differentially Enriched Gene Sets
+ColSideColors <- c(rep("black",num_label_1), rep("turquoise",num_label_2))
+data_heatmap <- heatmap.2(heat_mat_sort,Colv = NA, dendrogram = 'row', col = heatmap_color,scale="none", 
+                          margins=c(5,25),cexRow = 0.005 + 1/log10(dim(heat_mat_sort)[1]),cexCol = 0.025 + 1/log10(dim(heat_mat_sort)                                                                                                         
+                                                                                                                   [2]),labCol= colnames(heat_mat_sort), ColSideColors = ColSideColors, labRow = rownames(heat_mat_sort), main = "CCLE: Small Cell Lines", ylab = 
+                            "Differentially Enriched Gene Sets", key = T, keysize = 1.25, trace = "none", density.info = 'none', key.title = NA)
+legend("top", legend = c("ECM/Vasculature","Neural Signaling"), bty = "n", xpd = TRUE, horiz = TRUE, fill = c("black", "turquoise"), inset = c(0,0))
+
+write.table(DEgeneSets_orderlogFC,"Neural Signaling_v_ECMVasculature_DEgeneSets_5.13.2016.txt", sep = "\t")
+
+##################WGCNA Analysis Pipeline: Correlate Gene Module EigenGenes with Traits of CCLE Small Cell Lung Cancer#####################
+#Form a data frame analogous to expression data that will hold the clinical traits.
+traitData <- read.delim("smallcell_WGCNA_trait data3.txt", header = T, sep = "\t") #import smallcell CCLE data of Cisplatin IC 50, Etoposide IC 50 and Radiation AUC
+traitData <- traitData
+Samples = rownames(t(CCLE_dat));
+traitRows = match(Samples, traitData$Cell.Line);
+datTraits = traitData[traitRows, -1];
+rownames(datTraits) = traitData[traitRows, 1];
+collectGarbage();
+#correlate traits with module eigengenes
+nSamples = nrow(t(CCLE_dat))
+MEs_CCLE_RNASeqmodules <- moduleEigengenes(t(CCLE_dat), modules_RNASeq)$eigengenes
+MEs = orderMEs(MEs_CCLE_RNASeqmodules)
+moduleTraitCor = cor(MEs, datTraits, use = "p");
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples);
+#create heatmap of correlation matrix of traits and eigengenes
+sizeGrWindow(15,10)
+# Will display correlations and their p-values
+textMatrix = paste(signif(moduleTraitCor, 2), "\n(",
+                   signif(moduleTraitPvalue, 1), ")", sep = "");
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(8, 10, 3, 3));
+#Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = names(datTraits),
+               #                yLabels = c("Neurohumoral", "Neural Signaling", "Cell Cycle", "Trascription",
+               #                            "Mitochondria/Respiration", "Translation", "Nuclear Membrane/ER",
+               #                            "ECM/Vasculature", "Immune Response"),
+               yLabels = names(MEs),
+               ySymbols = names(MEs),
+               colorLabels = FALSE,
+               colors = rev(brewer.pal(11, "RdBu")),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+
